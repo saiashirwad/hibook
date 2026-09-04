@@ -172,6 +172,7 @@ function topologicalLayers(
 
 export function buildNotebookDependencyGraph(
   document: NotebookDocument,
+  reusableAnalyses?: ReadonlyMap<CellId, CellDependencyAnalysis>,
 ): NotebookGraphResult {
   const order = documentOrder(document);
   const analyses = new Map<CellId, CellDependencyAnalysis>();
@@ -182,7 +183,8 @@ export function buildNotebookDependencyGraph(
     if (!cell) {
       continue;
     }
-    const analysis = analyzeCellDependencies(document, cell);
+    const analysis =
+      reusableAnalyses?.get(cellId) ?? analyzeCellDependencies(document, cell);
     analyses.set(cellId, analysis);
     dependencies.set(cellId, analysis.dependencies);
   }

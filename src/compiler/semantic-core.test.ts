@@ -271,7 +271,7 @@ describe("semantic notebook project", () => {
       from: toolingSource.indexOf("products"),
       to: toolingSource.indexOf("products") + "products".length,
     });
-    expect(quickInfo?.text).toContain("products");
+    expect(quickInfo?.parts.map((part) => part.text).join("")).toContain("products");
   });
 
   it("types Markdown contexts readonly and reports attempted handle writes", () => {

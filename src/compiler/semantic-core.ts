@@ -1,6 +1,6 @@
 import ts from "typescript";
 import type { Cell, CellId } from "../model/types";
-import { revisionForDocument } from "./protocol";
+import { preparedDownstreamClosure, revisionForDocument } from "./protocol";
 import { BUNDLED_TYPESCRIPT_LIBS } from "./semantic-libs";
 import type {
   SemanticCellResult,
@@ -136,25 +136,14 @@ function affectedCells(input: SemanticProjectInput): ReadonlySet<CellId> {
   if (input.changedCellIds === undefined) {
     return new Set(input.prepared.graph.order);
   }
-  const affected = new Set<CellId>();
-  const pending: CellId[] = [];
-  for (const cellId of input.changedCellIds) {
-    if (Object.hasOwn(input.document.cells, cellId) && !affected.has(cellId)) {
-      affected.add(cellId);
-      pending.push(cellId);
-    }
-  }
-  for (let index = 0; index < pending.length; index += 1) {
-    const cellId = pending[index];
-    if (cellId === undefined) continue;
-    for (const dependentId of input.prepared.graph.dependents[cellId] ?? []) {
-      if (!affected.has(dependentId)) {
-        affected.add(dependentId);
-        pending.push(dependentId);
-      }
-    }
-  }
-  return affected;
+  return new Set(
+    preparedDownstreamClosure(
+      input.prepared.graph,
+      input.changedCellIds.filter((cellId) =>
+        Object.hasOwn(input.document.cells, cellId),
+      ),
+    ),
+  );
 }
 
 function diagnosticSeverity(category: ts.DiagnosticCategory): SemanticDiagnosticSeverity {
@@ -658,10 +647,14 @@ export class SemanticProjectCore {
     );
     if (!info) return { semantic, quickInfo: null };
     const range = this.#sourceRange(mapping, info.textSpan.start, info.textSpan.length);
-    const documentation = ts.displayPartsToString(info.documentation);
-    const display = ts.displayPartsToString(info.displayParts);
-    const text = documentation ? `${display}\n\n${documentation}` : display;
-    return { semantic, quickInfo: { ...range, text } };
+    return {
+      semantic,
+      quickInfo: {
+        ...range,
+        parts: (info.displayParts ?? []).map(({ text, kind }) => ({ text, kind })),
+        documentation: ts.displayPartsToString(info.documentation),
+      },
+    };
   }
 
   dispose(): void {

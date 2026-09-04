@@ -1,22 +1,16 @@
-import { createSignal } from "solid-js";
+import { createEffect, createSignal } from "solid-js";
 import type { Accessor } from "solid-js";
-import type { CellId, CellKind } from "../model/types";
-
-export type DisclosurePanel = "source" | "output" | "type";
+import type { CellId, NotebookDocument } from "../model/types";
 
 export interface NotebookViewState {
-  readonly selectedId: Accessor<CellId>;
+  readonly selectedId: Accessor<CellId | undefined>;
   readonly zoomRootId: Accessor<CellId>;
-  select(cellId: CellId): void;
+  select(cellId: CellId | undefined): void;
   zoom(cellId: CellId): void;
   isCollapsed(cellId: CellId): boolean;
   toggleCollapsed(cellId: CellId): void;
-  isDisclosureOpen(
-    cellId: CellId,
-    panel: DisclosurePanel,
-    kind: CellKind,
-  ): boolean;
-  toggleDisclosure(cellId: CellId, panel: DisclosurePanel, kind: CellKind): void;
+  isPinned(cellId: CellId): boolean;
+  togglePinned(cellId: CellId): void;
   renameDraft(cellId: CellId): string | undefined;
   renameError(cellId: CellId): string | undefined;
   beginRename(cellId: CellId, currentName: string): void;
@@ -26,30 +20,77 @@ export interface NotebookViewState {
   cancelRename(cellId: CellId): void;
 }
 
-function defaultDisclosure(panel: DisclosurePanel, kind: CellKind): boolean {
-  if (panel === "output") return kind !== "text";
-  return panel === "source" && kind === "text";
+interface PersistedViewState {
+  readonly zoomRootId?: CellId;
+  readonly selectedId?: CellId | undefined;
+  readonly collapsed?: readonly CellId[];
+  readonly pinned?: readonly CellId[];
 }
 
-function disclosureKey(cellId: CellId, panel: DisclosurePanel): string {
-  return `${cellId}:${panel}`;
+function storageKey(rootId: CellId): string {
+  return `hibook.view.${rootId}`;
 }
 
-export function createNotebookViewState(rootId: CellId): NotebookViewState {
-  const [selectedId, setSelectedId] = createSignal<CellId>(rootId);
-  const [zoomRootId, setZoomRootId] = createSignal<CellId>(rootId);
-  const [collapsedIds, setCollapsedIds] = createSignal<ReadonlySet<CellId>>(
-    new Set<CellId>(),
+function readPersisted(rootId: CellId): PersistedViewState {
+  try {
+    const raw = globalThis.localStorage?.getItem(storageKey(rootId));
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    return typeof parsed === "object" && parsed !== null
+      ? (parsed as PersistedViewState)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function writePersisted(rootId: CellId, state: PersistedViewState): void {
+  try {
+    globalThis.localStorage?.setItem(storageKey(rootId), JSON.stringify(state));
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+function toggled(set: ReadonlySet<CellId>, cellId: CellId): ReadonlySet<CellId> {
+  const next = new Set(set);
+  if (!next.delete(cellId)) next.add(cellId);
+  return next;
+}
+
+export function createNotebookViewState(
+  document: NotebookDocument,
+): NotebookViewState {
+  const known = (cellId: CellId | undefined): cellId is CellId =>
+    cellId !== undefined && Object.hasOwn(document.cells, cellId);
+  const knownIds = (ids: readonly CellId[] | undefined): ReadonlySet<CellId> =>
+    new Set((ids ?? []).filter(known));
+  const persisted = readPersisted(document.rootId);
+
+  const [selectedId, setSelectedId] = createSignal<CellId | undefined>(
+    known(persisted.selectedId) ? persisted.selectedId : undefined,
   );
-  const [disclosures, setDisclosures] = createSignal<
-    Readonly<Record<string, boolean>>
-  >({});
+  const [zoomRootId, setZoomRootId] = createSignal<CellId>(
+    known(persisted.zoomRootId) ? persisted.zoomRootId : document.rootId,
+  );
+  const [collapsedIds, setCollapsedIds] = createSignal(knownIds(persisted.collapsed));
+  const [pinnedIds, setPinnedIds] = createSignal(knownIds(persisted.pinned));
   const [renameDrafts, setRenameDrafts] = createSignal<
     Readonly<Record<CellId, string>>
   >({});
   const [renameErrors, setRenameErrors] = createSignal<
     Readonly<Record<CellId, string>>
   >({});
+
+  createEffect(
+    (): PersistedViewState => ({
+      zoomRootId: zoomRootId(),
+      selectedId: selectedId(),
+      collapsed: [...collapsedIds()],
+      pinned: [...pinnedIds()],
+    }),
+    (state) => writePersisted(document.rootId, state),
+  );
 
   const removeKey = (
     record: Readonly<Record<CellId, string>>,
@@ -70,25 +111,11 @@ export function createNotebookViewState(rootId: CellId): NotebookViewState {
     },
     isCollapsed: (cellId) => collapsedIds().has(cellId),
     toggleCollapsed(cellId) {
-      setCollapsedIds((current) => {
-        const next = new Set(current);
-        if (next.has(cellId)) next.delete(cellId);
-        else next.add(cellId);
-        return next;
-      });
+      setCollapsedIds((current) => toggled(current, cellId));
     },
-    isDisclosureOpen(cellId, panel, kind) {
-      return (
-        disclosures()[disclosureKey(cellId, panel)] ??
-        defaultDisclosure(panel, kind)
-      );
-    },
-    toggleDisclosure(cellId, panel, kind) {
-      const key = disclosureKey(cellId, panel);
-      setDisclosures((current) => ({
-        ...current,
-        [key]: !(current[key] ?? defaultDisclosure(panel, kind)),
-      }));
+    isPinned: (cellId) => pinnedIds().has(cellId),
+    togglePinned(cellId) {
+      setPinnedIds((current) => toggled(current, cellId));
     },
     renameDraft: (cellId) => renameDrafts()[cellId],
     renameError: (cellId) => renameErrors()[cellId],

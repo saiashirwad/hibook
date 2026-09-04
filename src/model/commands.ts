@@ -72,9 +72,15 @@ function rejected(error: CommandError): CommandResult {
   return { ok: false, error };
 }
 
+const structurallyValidDocuments = new WeakSet<NotebookDocument>();
+
 function invalidDocument(document: NotebookDocument): CommandResult | undefined {
+  if (structurallyValidDocuments.has(document)) {
+    return undefined;
+  }
   const validation = validateNotebook(document);
   if (validation.valid) {
+    structurallyValidDocuments.add(document);
     return undefined;
   }
   return {
@@ -766,13 +772,13 @@ export function update(
       : {}),
   };
 
-  return {
-    ok: true,
-    document: {
-      rootId: document.rootId,
-      cells: { ...document.cells, [cellId]: next },
-    },
+  const updated: NotebookDocument = {
+    rootId: document.rootId,
+    cells: { ...document.cells, [cellId]: next },
   };
+  // Patching one cell's data leaves the validated structure of the document intact.
+  structurallyValidDocuments.add(updated);
+  return { ok: true, document: updated };
 }
 
 export function move(

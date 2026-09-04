@@ -1,4 +1,4 @@
-import { For, Show, createMemo, createSignal, onSettled } from "solid-js";
+import { For, Show, createMemo, onSettled } from "solid-js";
 import type { Cell, CellId, CellKind } from "../model/types";
 import type { CellRunStatus } from "../runtime/registry";
 import CodeEditor from "./CodeEditor";
@@ -6,7 +6,7 @@ import { formatValue } from "./format-value";
 import type { NotebookController } from "./notebook-controller";
 import { renderMarkdown } from "./render-markdown";
 import { breadcrumbsFor } from "./tree-helpers";
-import type { NotebookViewState, DisclosurePanel } from "./view-state";
+import type { NotebookViewState } from "./view-state";
 import styles from "./NotebookTree.module.css";
 
 interface NotebookTreeProps {
@@ -24,9 +24,8 @@ interface RenameInputProps {
   readonly value: string;
   readonly error: string | undefined;
   readonly onInput: (value: string) => void;
-  readonly onSave: (input: HTMLInputElement, blurAfterSave: boolean) => boolean;
+  readonly onSave: (input: HTMLInputElement) => void;
   readonly onCancel: (input: HTMLInputElement) => void;
-  readonly onBlur: (input: HTMLInputElement) => void;
 }
 
 interface RuntimeOutputProps {
@@ -40,80 +39,51 @@ interface SourceEditorProps {
   readonly controller: NotebookController;
 }
 
-const KIND_LABEL: Record<CellKind, string> = {
-  text: "prose",
-  javascript: "javascript",
-  markdown: "markdown",
-};
-
-const PANEL_LABEL: Record<DisclosurePanel, string> = {
-  source: "SRC",
-  output: "OUT",
-  type: "TYPE",
+const KIND_LABEL: Record<Exclude<CellKind, "text">, string> = {
+  javascript: "js",
+  markdown: "md",
 };
 
 function RenameInput(props: RenameInputProps) {
-  let input: HTMLInputElement | undefined;
-
-  onSettled(() => {
-    input?.focus();
-    input?.select();
-  });
+  let cancelled = false;
 
   return (
-    <span class={styles.renameEditor}>
-      <input
-        ref={(element) => {
-          input = element;
-        }}
-        class={styles.renameInput}
-        value={props.value}
-        aria-label={`Programmatic name for ${props.cellId}`}
-        aria-invalid={props.error === undefined ? "false" : "true"}
-        aria-describedby={
-          props.error === undefined ? undefined : `rename-error-${props.cellId}`
+    <input
+      ref={(input) => {
+        onSettled(() => {
+          input.focus();
+          input.select();
+        });
+      }}
+      class={styles.renameInput}
+      value={props.value}
+      aria-label={`Programmatic name for ${props.cellId}`}
+      aria-invalid={props.error === undefined ? "false" : "true"}
+      aria-describedby={
+        props.error === undefined ? undefined : `rename-error-${props.cellId}`
+      }
+      onInput={(event) => props.onInput(event.currentTarget.value)}
+      onBlur={(event) => {
+        if (!cancelled) props.onSave(event.currentTarget);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          event.currentTarget.blur();
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          cancelled = true;
+          props.onCancel(event.currentTarget);
         }
-        onInput={(event) => props.onInput(event.currentTarget.value)}
-        onBlur={(event) => props.onBlur(event.currentTarget)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") {
-            event.preventDefault();
-            props.onSave(event.currentTarget, true);
-          } else if (event.key === "Escape") {
-            event.preventDefault();
-            props.onCancel(event.currentTarget);
-          }
-        }}
-      />
-      <button
-        type="button"
-        class={styles.renameButton}
-        aria-label={`Save name for ${props.cellId}`}
-        onMouseDown={(event) => event.preventDefault()}
-        onClick={(event) => {
-          event.stopPropagation();
-          if (input) props.onSave(input, true);
-        }}
-      >
-        Save
-      </button>
-      <button
-        type="button"
-        class={styles.renameButton}
-        aria-label={`Cancel rename for ${props.cellId}`}
-        onMouseDown={(event) => event.preventDefault()}
-        onClick={(event) => {
-          event.stopPropagation();
-          if (input) props.onCancel(input);
-        }}
-      >
-        Cancel
-      </button>
-    </span>
+      }}
+    />
   );
 }
 
 function RuntimeOutput(props: RuntimeOutputProps) {
+  const settled = () => props.status === "success" || props.status === "cached";
+  const showValue = () =>
+    settled() || (props.status === "pending" && props.value !== undefined);
   const markdownHtml = createMemo(() =>
     props.kind === "markdown" && typeof props.value === "string"
       ? renderMarkdown(props.value)
@@ -123,32 +93,24 @@ function RuntimeOutput(props: RuntimeOutputProps) {
 
   return (
     <Show
-      when={props.status === "success" || props.status === "cached"}
+      when={showValue()}
       fallback={
         <Show when={props.status === "idle" || props.status === "pending"}>
           <p class={styles.pendingOutput}>Waiting for execution…</p>
         </Show>
       }
     >
-      <Show when={props.status === "cached"}>
-        <p class={styles.cachedNotice}>Cached output · may be stale</p>
-      </Show>
       <Show
         when={markdownHtml() !== undefined}
         fallback={
-          <pre
-            class={`${styles.valueOutput} ${
-              props.status === "cached" ? styles.cachedOutput : ""
-            }`}
-          >
+          <pre class={styles.valueOutput} data-status={props.status}>
             {formattedValue()}
           </pre>
         }
       >
         <div
-          class={`${styles.markdownOutput} ${
-            props.status === "cached" ? styles.cachedOutput : ""
-          }`}
+          class={styles.markdownOutput}
+          data-status={props.status}
           data-markdown-output=""
           innerHTML={markdownHtml() ?? ""}
         />
@@ -158,55 +120,26 @@ function RuntimeOutput(props: RuntimeOutputProps) {
 }
 
 function ProseSource(props: SourceEditorProps) {
-  const [editing, setEditing] = createSignal(false);
-  const previewHtml = createMemo(() => renderMarkdown(props.cell.source));
-  const enterEditMode = () => setEditing(true);
-
   return (
-    <div class={styles.proseHost} data-prose-editor={props.cell.id}>
-      <div
-        class={`${styles.proseLayer} ${styles.prosePreview} ${
-          editing() ? styles.inactiveLayer : ""
-        }`}
-        role="button"
-        tabindex={editing() ? -1 : 0}
-        aria-label={`Edit prose for ${props.cell.id}`}
-        aria-hidden={editing() ? "true" : "false"}
-        innerHTML={previewHtml()}
-        onClick={(event) => {
-          event.preventDefault();
-          enterEditMode();
-        }}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            enterEditMode();
-          }
-        }}
+    <div class={styles.prose} data-prose-editor={props.cell.id}>
+      <CodeEditor
+        source={props.cell.source}
+        kind="text"
+        ariaLabel={`Prose for ${props.cell.id}`}
+        onChange={(source) =>
+          props.controller.updateCellSource(props.cell.id, source)
+        }
+        onRun={() => props.controller.runCell(props.cell.id)}
       />
-      <div
-        class={`${styles.proseLayer} ${styles.proseEditor} ${
-          editing() ? "" : styles.inactiveLayer
-        }`}
-        aria-hidden={editing() ? "false" : "true"}
-      >
-        <CodeEditor
-          source={props.cell.source}
-          kind="text"
-          ariaLabel={`Prose source for ${props.cell.id}`}
-          focused={editing()}
-          onChange={(source) =>
-            props.controller.updateCellSource(props.cell.id, source)
-          }
-          onRun={() => props.controller.runCell(props.cell.id)}
-          onBlur={() => setEditing(false)}
-        />
-      </div>
     </div>
   );
 }
 
 function ExecutableSource(props: SourceEditorProps) {
+  const diagnostics = createMemo(
+    () => props.controller.semanticFor(props.cell.id).result?.diagnostics,
+  );
+
   return (
     <div class={styles.codeSource} data-source-editor={props.cell.id}>
       <CodeEditor
@@ -217,9 +150,7 @@ function ExecutableSource(props: SourceEditorProps) {
           props.controller.updateCellSource(props.cell.id, source)
         }
         onRun={() => props.controller.runCell(props.cell.id)}
-        diagnostics={
-          props.controller.semanticFor(props.cell.id).result?.diagnostics ?? []
-        }
+        diagnostics={diagnostics()}
         onComplete={(position) =>
           props.controller.completionsFor(props.cell.id, position)
         }
@@ -231,42 +162,33 @@ function ExecutableSource(props: SourceEditorProps) {
   );
 }
 
-function DisclosureButton(props: {
-  readonly cellId: CellId;
-  readonly cellKind: CellKind;
-  readonly panel: DisclosurePanel;
-  readonly view: NotebookViewState;
-}) {
+function Chevron() {
   return (
-    <button
-      type="button"
-      class={styles.disclosureButton}
-      aria-label={`${
-        props.view.isDisclosureOpen(props.cellId, props.panel, props.cellKind)
-          ? "Hide"
-          : "Show"
-      } ${props.panel} for ${props.cellId}`}
-      aria-pressed={
-        props.view.isDisclosureOpen(
-          props.cellId,
-          props.panel,
-          props.cellKind,
-        )
-          ? "true"
-          : "false"
-      }
-      onClick={(event) => {
-        event.stopPropagation();
-        props.view.toggleDisclosure(
-          props.cellId,
-          props.panel,
-          props.cellKind,
-        );
-      }}
-    >
-      {PANEL_LABEL[props.panel]}
-    </button>
+    <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
+      <path d="M3 1.5 6.5 5 3 8.5" fill="none" stroke="currentColor" stroke-width="1.5" />
+    </svg>
   );
+}
+
+function PinIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+      <path
+        d="M9.5 1.5 14.5 6.5 12.5 7.5 10.5 10.5 10.5 13 3 5.5 5.5 5.5 8.5 3.5Z M6 10 2 14"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.4"
+        stroke-linejoin="round"
+        stroke-linecap="round"
+      />
+    </svg>
+  );
+}
+
+function focusEditor(treeItem: HTMLElement): void {
+  treeItem
+    .querySelector<HTMLElement>(":scope > [data-cell-main] .cm-content")
+    ?.focus();
 }
 
 function CellNode(props: CellNodeProps) {
@@ -275,12 +197,10 @@ function CellNode(props: CellNodeProps) {
   const preparation = createMemo(() =>
     props.controller.preparationFor(props.cellId),
   );
-  const semantic = createMemo(() =>
-    props.controller.semanticFor(props.cellId),
-  );
   const runtimeStatus = createMemo<CellRunStatus>(
     () => runtime()?.status() ?? "idle",
   );
+  const selected = () => props.view.selectedId() === props.cellId;
   const currentCell = (): Cell => {
     const current = cell();
     if (!current) {
@@ -288,25 +208,31 @@ function CellNode(props: CellNodeProps) {
     }
     return current;
   };
-  const suppressBlur = new Set<HTMLInputElement>();
+  const label = () => currentCell().name ?? currentCell().id;
+  const executable = () => currentCell().kind !== "text";
+  const hasChildren = () => currentCell().children.length > 0;
+  const showSource = () =>
+    executable() && (selected() || props.view.isPinned(props.cellId));
 
-  const saveRename = (input: HTMLInputElement, blurAfterSave: boolean): boolean => {
+  const saveRename = (input: HTMLInputElement): void => {
     const error = props.controller.renameCell(props.cellId, input.value);
     if (error) {
       props.view.setRenameError(props.cellId, error.message);
-      return false;
+      return;
     }
-
     props.view.finishRename(props.cellId);
-    if (blurAfterSave) {
-      suppressBlur.add(input);
-      input.blur();
-    }
-    return true;
   };
+
   const handleTreeKeyDown = (event: KeyboardEvent): void => {
     const treeItem = event.currentTarget;
-    if (!(treeItem instanceof HTMLElement) || event.target !== treeItem) return;
+    if (!(treeItem instanceof HTMLElement)) return;
+    if (event.target !== treeItem) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        treeItem.focus();
+      }
+      return;
+    }
 
     let destination: HTMLElement | null = null;
     let handled = false;
@@ -318,36 +244,24 @@ function CellNode(props: CellNodeProps) {
       event.key === "End"
     ) {
       const tree = treeItem.closest<HTMLElement>('[role="tree"]');
-      const visibleItems =
-        tree?.querySelectorAll<HTMLElement>('[role="treeitem"]');
-      if (!visibleItems || visibleItems.length === 0) return;
+      const visibleItems = tree
+        ? [...tree.querySelectorAll<HTMLElement>('[role="treeitem"]')]
+        : [];
+      if (visibleItems.length === 0) return;
       handled = true;
 
       if (event.key === "Home") {
-        destination = visibleItems.item(0);
+        destination = visibleItems[0] ?? null;
       } else if (event.key === "End") {
-        destination = visibleItems.item(visibleItems.length - 1);
+        destination = visibleItems.at(-1) ?? null;
       } else {
-        let currentIndex = -1;
-        for (let index = 0; index < visibleItems.length; index += 1) {
-          if (visibleItems.item(index) === treeItem) {
-            currentIndex = index;
-            break;
-          }
-        }
-
+        const currentIndex = visibleItems.indexOf(treeItem);
         const nextIndex =
           event.key === "ArrowUp" ? currentIndex - 1 : currentIndex + 1;
-        if (
-          currentIndex >= 0 &&
-          nextIndex >= 0 &&
-          nextIndex < visibleItems.length
-        ) {
-          destination = visibleItems.item(nextIndex);
-        }
+        if (currentIndex >= 0) destination = visibleItems[nextIndex] ?? null;
       }
     } else if (event.key === "ArrowRight") {
-      if (currentCell().children.length === 0) return;
+      if (!hasChildren()) return;
       if (props.view.isCollapsed(props.cellId)) {
         props.view.toggleCollapsed(props.cellId);
         handled = true;
@@ -357,10 +271,7 @@ function CellNode(props: CellNodeProps) {
         );
       }
     } else if (event.key === "ArrowLeft") {
-      if (
-        currentCell().children.length > 0 &&
-        !props.view.isCollapsed(props.cellId)
-      ) {
+      if (hasChildren() && !props.view.isCollapsed(props.cellId)) {
         props.view.toggleCollapsed(props.cellId);
         handled = true;
       } else {
@@ -368,6 +279,9 @@ function CellNode(props: CellNodeProps) {
           treeItem.parentElement?.closest<HTMLElement>('[role="treeitem"]') ??
           null;
       }
+    } else if (event.key === "Enter") {
+      focusEditor(treeItem);
+      handled = true;
     }
 
     if (destination) {
@@ -381,23 +295,18 @@ function CellNode(props: CellNodeProps) {
     <Show when={cell()}>
       <li
         role="treeitem"
-        tabindex={props.view.selectedId() === props.cellId ? 0 : -1}
-        class={
-          props.view.selectedId() === props.cellId
-            ? `${styles.node} ${styles.selected}`
-            : styles.node
-        }
-        aria-label={currentCell().name ?? currentCell().id}
+        tabindex={selected() ? 0 : -1}
+        class={styles.node}
+        data-selected={selected() ? "" : undefined}
+        aria-label={label()}
         aria-level={props.depth + 1}
-        aria-selected={
-          props.view.selectedId() === props.cellId ? "true" : "false"
-        }
+        aria-selected={selected() ? "true" : "false"}
         aria-expanded={
-          currentCell().children.length === 0
-            ? undefined
-            : props.view.isCollapsed(props.cellId)
+          hasChildren()
+            ? props.view.isCollapsed(props.cellId)
               ? "false"
               : "true"
+            : undefined
         }
         onFocus={(event) => {
           const target = event.target;
@@ -412,116 +321,93 @@ function CellNode(props: CellNodeProps) {
       >
         <div
           class={styles.main}
+          data-cell-main=""
           onClick={() => props.view.select(props.cellId)}
         >
-            <div class={styles.cellHeading}>
-              <Show
-                when={currentCell().children.length > 0}
-                fallback={<span class={styles.bullet} aria-hidden="true" />}
+          <div class={styles.gutter}>
+            <Show when={hasChildren()} fallback={<span class={styles.chevronSpace} />}>
+              <button
+                type="button"
+                class={styles.chevron}
+                data-expanded={props.view.isCollapsed(props.cellId) ? undefined : ""}
+                aria-label={`${
+                  props.view.isCollapsed(props.cellId) ? "Expand" : "Collapse"
+                } ${label()}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  props.view.toggleCollapsed(props.cellId);
+                }}
               >
+                <Chevron />
+              </button>
+            </Show>
+            <button
+              type="button"
+              class={styles.bullet}
+              data-status={executable() ? runtimeStatus() : undefined}
+              data-collapsed={
+                hasChildren() && props.view.isCollapsed(props.cellId) ? "" : undefined
+              }
+              aria-label={`Zoom into ${label()}`}
+              title={executable() ? runtimeStatus() : undefined}
+              onClick={(event) => {
+                event.stopPropagation();
+                props.view.zoom(props.cellId);
+              }}
+            />
+          </div>
+
+          <div class={styles.body}>
+            <div class={styles.heading}>
+              <Show
+                when={props.view.renameDraft(props.cellId) !== undefined}
+                fallback={
+                  <span
+                    class={styles.cellName}
+                    title="Double-click to rename"
+                    onDblClick={(event) => {
+                      event.preventDefault();
+                      props.view.beginRename(props.cellId, label());
+                    }}
+                  >
+                    {label()}
+                  </span>
+                }
+              >
+                <RenameInput
+                  cellId={props.cellId}
+                  value={props.view.renameDraft(props.cellId) ?? ""}
+                  error={props.view.renameError(props.cellId)}
+                  onInput={(value) => props.view.setRenameDraft(props.cellId, value)}
+                  onSave={saveRename}
+                  onCancel={() => props.view.cancelRename(props.cellId)}
+                />
+              </Show>
+              <Show when={executable()}>
+                <span class={styles.kind}>
+                  {KIND_LABEL[currentCell().kind as Exclude<CellKind, "text">]}
+                </span>
+                <Show when={preparation()?.type}>
+                  <span class={styles.inlineType} title={preparation()?.type}>
+                    {preparation()?.type}
+                  </span>
+                </Show>
                 <button
                   type="button"
-                  class={styles.collapseButton}
+                  class={styles.pin}
+                  aria-pressed={props.view.isPinned(props.cellId) ? "true" : "false"}
                   aria-label={`${
-                    props.view.isCollapsed(props.cellId) ? "Expand" : "Collapse"
-                  } ${currentCell().name ?? currentCell().id}`}
+                    props.view.isPinned(props.cellId) ? "Unpin" : "Pin"
+                  } source for ${label()}`}
+                  title="Keep source visible"
                   onClick={(event) => {
                     event.stopPropagation();
-                    props.view.select(props.cellId);
-                    props.view.toggleCollapsed(props.cellId);
+                    props.view.togglePinned(props.cellId);
                   }}
                 >
-                  <span aria-hidden="true">
-                    {props.view.isCollapsed(props.cellId) ? "›" : "⌄"}
-                  </span>
+                  <PinIcon />
                 </button>
               </Show>
-
-              <div class={styles.identity}>
-                <Show
-                  when={props.view.renameDraft(props.cellId) !== undefined}
-                  fallback={
-                    <span class={styles.cellName}>
-                      {currentCell().name ?? currentCell().id}
-                    </span>
-                  }
-                >
-                  <RenameInput
-                    cellId={props.cellId}
-                    value={props.view.renameDraft(props.cellId) ?? ""}
-                    error={props.view.renameError(props.cellId)}
-                    onInput={(value) =>
-                      props.view.setRenameDraft(props.cellId, value)
-                    }
-                    onSave={saveRename}
-                    onCancel={(input) => {
-                      suppressBlur.add(input);
-                      props.view.cancelRename(props.cellId);
-                      input.blur();
-                    }}
-                    onBlur={(input) => {
-                      if (suppressBlur.delete(input)) return;
-                      saveRename(input, false);
-                    }}
-                  />
-                </Show>
-                <span class={styles.kind}>{KIND_LABEL[currentCell().kind]}</span>
-                <Show when={preparation()?.type}>
-                  <span class={styles.inlineType}>{preparation()?.type}</span>
-                </Show>
-                <Show when={currentCell().kind !== "text"}>
-                  <span
-                    class={`${styles.runStatus} ${styles[`status-${runtimeStatus()}`]}`}
-                    aria-label={`Execution status: ${runtimeStatus()}`}
-                  >
-                    {runtimeStatus()}
-                    <Show when={runtime()?.version()}>
-                      {" · run "}
-                      {runtime()?.version()}
-                    </Show>
-                  </span>
-                </Show>
-              </div>
-
-              <div class={styles.actions} role="group" aria-label="Cell actions">
-                <For each={["source", "output", "type"] as const}>
-                  {(panel) => (
-                    <DisclosureButton
-                      cellId={props.cellId}
-                      cellKind={currentCell().kind}
-                      panel={panel}
-                      view={props.view}
-                    />
-                  )}
-                </For>
-                <button
-                  type="button"
-                  class={styles.actionButton}
-                  aria-label={`Rename ${currentCell().name ?? currentCell().id}`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    props.view.beginRename(
-                      props.cellId,
-                      currentCell().name ?? currentCell().id,
-                    );
-                  }}
-                >
-                  Rename
-                </button>
-                <Show when={props.view.zoomRootId() !== props.cellId}>
-                  <button
-                    type="button"
-                    class={styles.actionButton}
-                    aria-label={`Zoom to ${currentCell().name ?? currentCell().id}`}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      props.view.zoom(props.cellId);
-                    }}
-                  >
-                    Zoom
-                  </button>
-                </Show>
-              </div>
             </div>
 
             <Show when={props.view.renameError(props.cellId)}>
@@ -534,149 +420,96 @@ function CellNode(props: CellNodeProps) {
               </p>
             </Show>
 
-            <Show
-              when={props.view.isDisclosureOpen(
-                props.cellId,
-                "source",
-                currentCell().kind,
-              )}
-            >
-              <Show
-                when={currentCell().kind === "text"}
-                fallback={
-                  <ExecutableSource
-                    cell={currentCell()}
-                    controller={props.controller}
-                  />
-                }
-              >
-                <ProseSource
-                  cell={currentCell()}
-                  controller={props.controller}
-                />
-              </Show>
+            <Show when={!executable()}>
+              <ProseSource cell={currentCell()} controller={props.controller} />
             </Show>
 
-            <Show
-              when={
-                runtimeStatus() === "error" || runtimeStatus() === "cycle"
-              }
-            >
+            <Show when={showSource()}>
+              <ExecutableSource cell={currentCell()} controller={props.controller} />
+            </Show>
+
+            <Show when={runtimeStatus() === "error" || runtimeStatus() === "cycle"}>
               <p class={styles.runtimeError} role="alert">
                 {runtime()?.error() ?? "Notebook cell failed"}
               </p>
             </Show>
 
-            <Show
-              when={props.view.isDisclosureOpen(
-                props.cellId,
-                "output",
-                currentCell().kind,
-              )}
-            >
+            <Show when={executable()}>
               <RuntimeOutput
                 kind={currentCell().kind}
                 status={runtimeStatus()}
                 value={runtime()?.value()}
               />
             </Show>
-
-            <Show
-              when={props.view.isDisclosureOpen(
-                props.cellId,
-                "type",
-                currentCell().kind,
-              )}
-            >
-              <div
-                class={styles.typePanel}
-                data-semantic-status={semantic().status}
-              >
-                <p>
-                  Type ({semantic().status}):{" "}
-                  <code>
-                    {semantic().result?.type ?? preparation()?.type ?? "pending"}
-                  </code>
-                </p>
-                <Show
-                  when={
-                    semantic().result?.diagnostics.length
-                      ? semantic().result?.diagnostics
-                      : preparation()?.issues
-                  }
-                >
-                  <ul>
-                    <For
-                      each={
-                        semantic().result?.diagnostics.length
-                          ? semantic().result?.diagnostics
-                          : preparation()?.issues ?? []
-                      }
-                    >
-                      {(issue) => <li>{issue.message}</li>}
-                    </For>
-                  </ul>
-                </Show>
-              </div>
-            </Show>
           </div>
+        </div>
 
-          <Show
-            when={
-              currentCell().children.length > 0 &&
-              !props.view.isCollapsed(props.cellId)
-            }
-          >
-            <ol role="group" class={styles.children}>
-              <For each={currentCell().children}>
-                {(childId) => (
-                  <CellNode
-                    cellId={childId}
-                    depth={props.depth + 1}
-                    controller={props.controller}
-                    view={props.view}
-                  />
-                )}
-              </For>
-            </ol>
-          </Show>
-        </li>
+        <Show when={hasChildren() && !props.view.isCollapsed(props.cellId)}>
+          <ol role="group" class={styles.children}>
+            <For each={currentCell().children}>
+              {(childId) => (
+                <CellNode
+                  cellId={childId}
+                  depth={props.depth + 1}
+                  controller={props.controller}
+                  view={props.view}
+                />
+              )}
+            </For>
+          </ol>
+        </Show>
+      </li>
     </Show>
   );
 }
 
 export default function NotebookTree(props: NotebookTreeProps) {
+  const document = () => props.controller.document();
   const breadcrumbs = createMemo(() =>
-    breadcrumbsFor(props.controller.document(), props.view.zoomRootId()),
+    breadcrumbsFor(document(), props.view.zoomRootId()),
   );
+  const zoomed = () => props.view.zoomRootId() !== document().rootId;
+  const rootLabel = () => {
+    const root = document().cells[document().rootId];
+    return root?.name ?? document().rootId;
+  };
 
   return (
     <section class={styles.workspace} aria-label="Notebook outliner">
-      <nav class={styles.breadcrumbs} aria-label="Notebook location">
-        <For each={breadcrumbs()}>
-          {(breadcrumb, index) => (
-            <span class={styles.breadcrumbItem}>
-              <Show when={index() > 0}>
-                <span class={styles.breadcrumbSeparator} aria-hidden="true">
-                  /
-                </span>
-              </Show>
-              <button
-                type="button"
-                class={styles.breadcrumbButton}
-                aria-current={
-                  breadcrumb.id === props.view.zoomRootId() ? "location" : undefined
-                }
-                onClick={() => props.view.zoom(breadcrumb.id)}
-              >
-                {breadcrumb.label}
-              </button>
-            </span>
-          )}
-        </For>
-      </nav>
+      <Show when={zoomed()}>
+        <nav class={styles.breadcrumbs} aria-label="Notebook location">
+          <For each={breadcrumbs()}>
+            {(breadcrumb, index) => (
+              <>
+                <Show when={index() > 0}>
+                  <span class={styles.breadcrumbSeparator} aria-hidden="true">
+                    /
+                  </span>
+                </Show>
+                <button
+                  type="button"
+                  class={styles.breadcrumbButton}
+                  aria-current={
+                    breadcrumb.id === props.view.zoomRootId() ? "location" : undefined
+                  }
+                  onClick={() => props.view.zoom(breadcrumb.id)}
+                >
+                  {breadcrumb.label}
+                </button>
+              </>
+            )}
+          </For>
+        </nav>
+      </Show>
 
-      <ol role="tree" class={styles.tree} aria-label="Tiny Commerce notebook">
+      <ol
+        role="tree"
+        class={styles.tree}
+        aria-label={`${rootLabel()} notebook`}
+        onClick={(event) => {
+          if (event.target === event.currentTarget) props.view.select(undefined);
+        }}
+      >
         <CellNode
           cellId={props.view.zoomRootId()}
           depth={0}

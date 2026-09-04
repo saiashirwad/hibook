@@ -8,6 +8,7 @@ import {
   TOP_LEVEL_AWAIT_UNSUPPORTED_ERROR,
   prepareExecution,
 } from "./fast-prepare";
+import type { PreparedNotebook } from "./protocol";
 import { revisionForDocument } from "./protocol";
 
 function cell(
@@ -241,5 +242,43 @@ describe("fast notebook preparation", () => {
     );
     expect(second.timings.reusedCells).toBe(3);
     expect(second.timings.transpiledCells).toBe(0);
+  });
+
+  it("reuses dependency analyses for cells whose source and structure are unchanged", () => {
+    const count = cell("count", "javascript", "$(() => 1)");
+    const derived = cell(
+      "derived",
+      "javascript",
+      "$(({ root }) => root.count.value)",
+    );
+    const document = flatDocument([count, derived]);
+    const core = new FastPreparationCore();
+    const analysisFor = (prepared: PreparedNotebook, cellId: CellId) =>
+      prepared.cells.find((entry) => entry.cellId === cellId)?.analysis;
+
+    const first = core.prepare(document);
+    const edited = core.prepare({
+      ...document,
+      cells: {
+        ...document.cells,
+        count: { ...count, source: "$(() => 2)" },
+      },
+    });
+    expect(analysisFor(edited, "derived")).toBe(analysisFor(first, "derived"));
+    expect(analysisFor(edited, "count")).not.toBe(analysisFor(first, "count"));
+
+    const renamed = core.prepare({
+      ...document,
+      cells: {
+        ...document.cells,
+        count: { ...count, source: "$(() => 2)", name: "renamed" },
+      },
+    });
+    expect(analysisFor(renamed, "derived")).not.toBe(
+      analysisFor(edited, "derived"),
+    );
+    expect(analysisFor(renamed, "derived")?.dependencies).not.toEqual(
+      analysisFor(edited, "derived")?.dependencies,
+    );
   });
 });

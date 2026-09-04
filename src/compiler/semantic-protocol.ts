@@ -98,10 +98,16 @@ export interface SemanticCompletionResult {
   readonly items: readonly SemanticCompletionItem[];
 }
 
+export interface SemanticDisplayPart {
+  readonly text: string;
+  readonly kind: string;
+}
+
 export interface SemanticQuickInfo {
   readonly from: number;
   readonly to: number;
-  readonly text: string;
+  readonly parts: readonly SemanticDisplayPart[];
+  readonly documentation: string;
 }
 
 interface SemanticResponseBase {

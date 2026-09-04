@@ -1,6 +1,9 @@
 import type { Cell, CellId, NotebookDocument } from "../model/types";
 import type { PreparedCell, PreparedNotebook } from "../compiler/protocol";
-import { revisionForDocument } from "../compiler/protocol";
+import {
+  preparedDownstreamClosure,
+  revisionForDocument,
+} from "../compiler/protocol";
 import type { NotebookGraphResult } from "./analysis-types";
 import { buildNotebookReadHandles } from "./read-handles";
 import type { RuntimeContext } from "./read-handles";
@@ -82,33 +85,6 @@ function runtimeGraph(prepared: PreparedNotebook): NotebookGraphResult {
     cycleMembers: prepared.graph.cycleMembers,
     blockedByCycles: prepared.graph.blockedByCycles,
   };
-}
-
-function downstreamClosure(
-  graph: NotebookGraphResult,
-  changedIds: Iterable<CellId>,
-): readonly CellId[] {
-  const affected = new Set<CellId>();
-  const pending: CellId[] = [];
-  for (const cellId of changedIds) {
-    if (graph.dependents.has(cellId) && !affected.has(cellId)) {
-      affected.add(cellId);
-      pending.push(cellId);
-    }
-  }
-  for (let index = 0; index < pending.length; index += 1) {
-    const cellId = pending[index];
-    if (cellId === undefined) {
-      continue;
-    }
-    for (const dependentId of graph.dependents.get(cellId) ?? []) {
-      if (!affected.has(dependentId)) {
-        affected.add(dependentId);
-        pending.push(dependentId);
-      }
-    }
-  }
-  return graph.order.filter((cellId) => affected.has(cellId));
 }
 
 function preparationFor(
@@ -193,7 +169,7 @@ export function executeNotebookTransaction(
     prepared.cells.map((cell) => [cell.cellId, cell] as const),
   );
   const affectedIds = Object.hasOwn(options, "changedIds")
-    ? downstreamClosure(graph, options.changedIds ?? [])
+    ? preparedDownstreamClosure(prepared.graph, options.changedIds ?? [])
     : graph.order;
   const affected = new Set(affectedIds);
   const handles = buildNotebookReadHandles(document, registry);

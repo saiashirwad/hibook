@@ -142,7 +142,12 @@ class ControlledSemanticWorker implements SemanticWorkerLike {
             requestId: request.requestId,
             revision: request.revision,
             semantic,
-            quickInfo: { from: 4, to: 9, text: "property value: number" },
+            quickInfo: {
+              from: 4,
+              to: 9,
+              parts: [{ text: "value", kind: "propertyName" }],
+              documentation: "",
+            },
           },
         });
         break;
@@ -285,7 +290,8 @@ describe("semantic coordinator", () => {
     await expect(quickInfoPromise).resolves.toEqual({
       from: 4,
       to: 9,
-      text: "property value: number",
+      parts: [{ text: "value", kind: "propertyName" }],
+      documentation: "",
     });
     expect(worker.requests.map((request) => request.type)).toEqual([
       "completions",

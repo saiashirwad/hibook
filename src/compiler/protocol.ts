@@ -94,6 +94,44 @@ export interface FastPrepareFailure {
 
 export type FastPrepareResponse = FastPrepareSuccess | FastPrepareFailure;
 
+const revisionByDocument = new WeakMap<NotebookDocument, string>();
+
 export function revisionForDocument(document: NotebookDocument): string {
-  return JSON.stringify(document);
+  const cached = revisionByDocument.get(document);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const revision = JSON.stringify(document);
+  revisionByDocument.set(document, revision);
+  return revision;
+}
+
+export function preparedDownstreamClosure(
+  graph: PreparedGraph,
+  changedIds: Iterable<CellId>,
+): readonly CellId[] {
+  const affected = new Set<CellId>();
+  const pending: CellId[] = [];
+
+  for (const cellId of changedIds) {
+    if (Object.hasOwn(graph.dependents, cellId) && !affected.has(cellId)) {
+      affected.add(cellId);
+      pending.push(cellId);
+    }
+  }
+
+  for (let index = 0; index < pending.length; index += 1) {
+    const cellId = pending[index];
+    if (cellId === undefined) {
+      continue;
+    }
+    for (const dependentId of graph.dependents[cellId] ?? []) {
+      if (!affected.has(dependentId)) {
+        affected.add(dependentId);
+        pending.push(dependentId);
+      }
+    }
+  }
+
+  return graph.order.filter((cellId) => affected.has(cellId));
 }

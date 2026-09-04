@@ -29,6 +29,12 @@ interface TranspiledCellCacheEntry {
   readonly code: string;
 }
 
+interface AnalyzedCellCacheEntry {
+  readonly kind: Cell["kind"];
+  readonly source: string;
+  readonly analysis: CellDependencyAnalysis;
+}
+
 function now(): number {
   return typeof performance === "undefined" ? Date.now() : performance.now();
 }
@@ -161,6 +167,14 @@ function rejectedPreparation(
   };
 }
 
+function structureFingerprint(document: NotebookDocument): string {
+  const parts = [document.rootId];
+  for (const [cellId, cell] of Object.entries(document.cells)) {
+    parts.push(`${cellId}\u0000${cell.name ?? ""}\u0000${cell.children.join("\u0002")}`);
+  }
+  return parts.join("\u0001");
+}
+
 function serializeGraph(graph: NotebookGraphResult): PreparedGraph {
   return {
     order: [...graph.order],
@@ -179,6 +193,8 @@ function serializeGraph(graph: NotebookGraphResult): PreparedGraph {
 
 export class FastPreparationCore {
   readonly #transpiled = new Map<CellId, TranspiledCellCacheEntry>();
+  readonly #analyzed = new Map<CellId, AnalyzedCellCacheEntry>();
+  #structure: string | undefined;
 
   prepare(
     document: NotebookDocument,
@@ -186,7 +202,11 @@ export class FastPreparationCore {
   ): PreparedNotebook {
     const startedAt = now();
     const analysisStartedAt = now();
-    const graph = buildNotebookDependencyGraph(document);
+    const graph = buildNotebookDependencyGraph(
+      document,
+      this.#reusableAnalyses(document),
+    );
+    this.#rememberAnalyses(document, graph.analyses);
     const analysisMs = now() - analysisStartedAt;
     const cycleBlocked = new Set([
       ...graph.cycleMembers,
@@ -315,6 +335,41 @@ export class FastPreparationCore {
         transpiledCells,
       },
     };
+  }
+
+  #reusableAnalyses(
+    document: NotebookDocument,
+  ): ReadonlyMap<CellId, CellDependencyAnalysis> {
+    const structure = structureFingerprint(document);
+    if (structure !== this.#structure) {
+      this.#analyzed.clear();
+      this.#structure = structure;
+    }
+    const reusable = new Map<CellId, CellDependencyAnalysis>();
+    for (const [cellId, entry] of this.#analyzed) {
+      const cell = document.cells[cellId];
+      if (cell?.kind === entry.kind && cell.source === entry.source) {
+        reusable.set(cellId, entry.analysis);
+      }
+    }
+    return reusable;
+  }
+
+  #rememberAnalyses(
+    document: NotebookDocument,
+    analyses: ReadonlyMap<CellId, CellDependencyAnalysis>,
+  ): void {
+    this.#analyzed.clear();
+    for (const [cellId, analysis] of analyses) {
+      const cell = document.cells[cellId];
+      if (cell) {
+        this.#analyzed.set(cellId, {
+          kind: cell.kind,
+          source: cell.source,
+          analysis,
+        });
+      }
+    }
   }
 }
 

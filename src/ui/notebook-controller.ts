@@ -7,7 +7,10 @@ import {
   FastPreparationCoordinator,
 } from "../compiler/coordinator";
 import type { PreparedCell, PreparedNotebook } from "../compiler/protocol";
-import { revisionForDocument } from "../compiler/protocol";
+import {
+  preparedDownstreamClosure,
+  revisionForDocument,
+} from "../compiler/protocol";
 import {
   SemanticCoordinator,
   SemanticInferenceScheduler,
@@ -30,6 +33,7 @@ import type {
   CommandError,
   NotebookDocument,
 } from "../model/types";
+import type { DependencyIssue } from "../runtime/analysis-types";
 import { executeNotebookTransaction } from "../runtime/execute";
 import {
   createRuntimeRegistry,
@@ -64,6 +68,7 @@ export interface NotebookController {
   readonly running: Accessor<boolean>;
   readonly hydrating: Accessor<boolean>;
   readonly cached: Accessor<boolean>;
+  readonly preparedStale: Accessor<boolean>;
   runAll(): void;
   runCell(cellId: CellId): void;
   updateCellSource(cellId: CellId, source: string): CommandError | undefined;
@@ -89,6 +94,106 @@ function errorMessage(error: unknown): string {
   } catch {
     return "Notebook execution failed";
   }
+}
+
+function sameIssues(
+  left: readonly DependencyIssue[],
+  right: readonly DependencyIssue[],
+): boolean {
+  return (
+    left === right ||
+    (left.length === right.length &&
+      left.every((issue, index) => {
+        const other = right[index];
+        return (
+          other !== undefined &&
+          issue.classification === other.classification &&
+          issue.code === other.code &&
+          issue.message === other.message &&
+          issue.span.start === other.span.start &&
+          issue.span.end === other.span.end
+        );
+      }))
+  );
+}
+
+function sameCellIds(
+  left: readonly CellId[],
+  right: readonly CellId[],
+): boolean {
+  return (
+    left === right ||
+    (left.length === right.length &&
+      left.every((cellId, index) => cellId === right[index]))
+  );
+}
+
+function samePreparedCell(left: PreparedCell, right: PreparedCell): boolean {
+  if (left === right) return true;
+  if (
+    left.cellId !== right.cellId ||
+    left.kind !== right.kind ||
+    left.source !== right.source ||
+    left.type !== right.type ||
+    left.status !== right.status ||
+    !sameCellIds(left.dependencies, right.dependencies) ||
+    !sameIssues(left.issues, right.issues)
+  ) {
+    return false;
+  }
+  if (left.ok && right.ok) return left.code === right.code;
+  if (!left.ok && !right.ok) {
+    return (
+      left.error.code === right.error.code &&
+      left.error.message === right.error.message
+    );
+  }
+  return false;
+}
+
+function sameDiagnostics(
+  left: readonly SemanticDiagnostic[],
+  right: readonly SemanticDiagnostic[],
+): boolean {
+  return (
+    left === right ||
+    (left.length === right.length &&
+      left.every((diagnostic, index) => {
+        const other = right[index];
+        return (
+          other !== undefined &&
+          diagnostic.from === other.from &&
+          diagnostic.to === other.to &&
+          diagnostic.severity === other.severity &&
+          diagnostic.message === other.message
+        );
+      }))
+  );
+}
+
+function sameSemanticResult(
+  left: SemanticCellResult | undefined,
+  right: SemanticCellResult | undefined,
+): boolean {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return (
+    left.cellId === right.cellId &&
+    left.type === right.type &&
+    left.status === right.status &&
+    sameDiagnostics(left.diagnostics, right.diagnostics)
+  );
+}
+
+function changedTextCellsOnly(
+  document: NotebookDocument,
+  changedIds: readonly CellId[] | undefined,
+): boolean {
+  return (
+    changedIds !== undefined &&
+    changedIds.length > 0 &&
+    changedIds.every((cellId) => document.cells[cellId]?.kind === "text")
+  );
 }
 
 function disposeRegistry(registry: CellRuntimeRegistry): void {
@@ -146,36 +251,51 @@ export function createNotebookController(
   const [running, setRunning] = createSignal(false);
   const [hydrating, setHydrating] = createSignal(true);
   const [cached, setCached] = createSignal(false);
+  const [preparedStale, setPreparedStale] = createSignal(false);
   const [runtimeEpoch, setRuntimeEpoch] = createSignal(0);
 
   let currentDocument = initialDocument;
+  let currentRevision = revisionForDocument(initialDocument);
   let currentPrepared: PreparedNotebook | undefined;
   let preparedById = new Map<CellId, PreparedCell>();
-  let semanticById = new Map<CellId, SemanticCellResult>();
+  const semanticById = new Map<CellId, SemanticCellResult>();
+  const semanticDisplayById = new Map<CellId, CellSemanticDisplay>();
+  const hydratedCellIds = new Set<CellId>();
   let semanticChangedCellIds: readonly CellId[] | undefined;
   let semanticGeneration = 0;
   let semanticPhase: SemanticDisplayStatus = "provisional";
+  let semanticRevision = currentRevision;
   let publishedSemanticRevision: string | undefined;
   let activeRun = 0;
   let queuedRun = false;
   let disposed = false;
+
+  const adoptDocument = (document: NotebookDocument): void => {
+    currentDocument = document;
+    currentRevision = revisionForDocument(document);
+    setDocumentBox({ current: document });
+  };
 
   const rebuildVisiblePreparation = (): void => {
     if (!currentPrepared) {
       preparedById = new Map();
       return;
     }
-    preparedById = new Map(
-      currentPrepared.cells.map((prepared) => {
-        const semantic = semanticById.get(prepared.cellId);
-        return [
-          prepared.cellId,
-          semantic
-            ? { ...prepared, type: semantic.type, status: semantic.status }
-            : prepared,
-        ] as const;
-      }),
-    );
+    const next = new Map<CellId, PreparedCell>();
+    for (const prepared of currentPrepared.cells) {
+      const semantic = semanticById.get(prepared.cellId);
+      const visible =
+        semantic &&
+        (semantic.type !== prepared.type || semantic.status !== prepared.status)
+          ? { ...prepared, type: semantic.type, status: semantic.status }
+          : prepared;
+      const previous = preparedById.get(prepared.cellId);
+      next.set(
+        prepared.cellId,
+        previous && samePreparedCell(previous, visible) ? previous : visible,
+      );
+    }
+    preparedById = next;
   };
 
   const persist = (
@@ -213,7 +333,7 @@ export function createNotebookController(
     if (
       disposed ||
       generation !== semanticGeneration ||
-      revision !== revisionForDocument(currentDocument) ||
+      revision !== semanticRevision ||
       semantic.revision !== revision
     ) {
       return false;
@@ -224,15 +344,18 @@ export function createNotebookController(
     ) {
       return true;
     }
-    semanticById = new Map(
-      semantic.cells.map((cell) => [cell.cellId, cell] as const),
-    );
+    semanticById.clear();
+    for (const cell of semantic.cells) {
+      semanticById.set(cell.cellId, cell);
+    }
     if (currentPrepared?.revision === revision) {
       currentPrepared = {
         ...currentPrepared,
         cells: currentPrepared.cells.map((prepared) => {
           const semanticCell = semanticById.get(prepared.cellId);
-          return semanticCell
+          return semanticCell &&
+            (semanticCell.type !== prepared.type ||
+              semanticCell.status !== prepared.status)
             ? {
                 ...prepared,
                 type: semanticCell.type,
@@ -259,8 +382,18 @@ export function createNotebookController(
     semanticChangedCellIds = changedCellIds;
     semanticScheduler.cancel();
     semanticCoordinator.synchronize(document);
+    semanticRevision = revisionForDocument(document);
     publishedSemanticRevision = undefined;
-    semanticById = new Map();
+    if (changedCellIds && currentPrepared) {
+      for (const cellId of preparedDownstreamClosure(
+        currentPrepared.graph,
+        changedCellIds,
+      )) {
+        semanticById.delete(cellId);
+      }
+    } else {
+      semanticById.clear();
+    }
     rebuildVisiblePreparation();
     setSemanticBox({ current: undefined });
     updateSemanticStatus("provisional");
@@ -273,6 +406,7 @@ export function createNotebookController(
   ): void => {
     const revision = prepared.revision;
     const generation = semanticGeneration;
+    semanticRevision = revision;
     const input: SemanticProjectInput = {
       document: snapshot,
       prepared,
@@ -287,13 +421,31 @@ export function createNotebookController(
         if (
           !disposed &&
           generation === semanticGeneration &&
-          revision === revisionForDocument(currentDocument) &&
+          revision === semanticRevision &&
           !expectedSemanticInterruption(error)
         ) {
           updateSemanticStatus("unavailable");
         }
       },
     );
+  };
+
+  const dropHydratedValues = (changedIds?: readonly CellId[]): void => {
+    if (hydratedCellIds.size === 0) return;
+    const invalidated =
+      changedIds && currentPrepared
+        ? preparedDownstreamClosure(currentPrepared.graph, changedIds)
+        : undefined;
+    if (!invalidated) {
+      hydratedCellIds.clear();
+      setCached(false);
+      return;
+    }
+    let dropped = false;
+    for (const cellId of invalidated) {
+      dropped = hydratedCellIds.delete(cellId) || dropped;
+    }
+    if (dropped) setCached(false);
   };
 
   const runDocument = async (
@@ -304,12 +456,8 @@ export function createNotebookController(
     if (!delayed) executionScheduler.cancel();
     const run = ++activeRun;
     const revision = revisionForDocument(snapshot);
-    setCached(false);
-    if (currentPrepared?.revision !== revision) {
-      currentPrepared = undefined;
-      setPreparedBox({ current: undefined });
-      rebuildVisiblePreparation();
-    }
+    dropHydratedValues(changedIds);
+    setPreparedStale(currentPrepared?.revision !== revision);
     setRunning(true);
     setErrorBox({ current: undefined });
     synchronizeRuntimeRegistry(registry, snapshot);
@@ -322,7 +470,7 @@ export function createNotebookController(
       if (
         disposed ||
         run !== activeRun ||
-        revision !== revisionForDocument(currentDocument) ||
+        revision !== currentRevision ||
         prepared.revision !== revision
       ) {
         return;
@@ -331,6 +479,7 @@ export function createNotebookController(
       currentPrepared = prepared;
       rebuildVisiblePreparation();
       setPreparedBox({ current: prepared });
+      setPreparedStale(false);
       executeNotebookTransaction(
         snapshot,
         registry,
@@ -338,7 +487,9 @@ export function createNotebookController(
       );
       setRuntimeEpoch((current) => current + 1);
       persist(snapshot, prepared);
-      scheduleSemantic(snapshot, prepared, changedIds);
+      if (!changedTextCellsOnly(snapshot, changedIds)) {
+        scheduleSemantic(snapshot, prepared, changedIds);
+      }
     } catch (error) {
       if (!disposed && run === activeRun) {
         setErrorBox({ current: errorMessage(error) });
@@ -353,18 +504,19 @@ export function createNotebookController(
     readonly input: SemanticProjectInput;
   }> => {
     const snapshot = currentDocument;
-    const revision = revisionForDocument(snapshot);
+    const revision = currentRevision;
     const prepared =
       currentPrepared?.revision === revision
         ? currentPrepared
         : await coordinator.prepareFast(snapshot);
     if (
       disposed ||
-      revision !== revisionForDocument(currentDocument) ||
+      revision !== currentRevision ||
       prepared.revision !== revision
     ) {
       throw new StaleSemanticRequestError();
     }
+    semanticRevision = revision;
     return {
       revision,
       input: {
@@ -380,7 +532,7 @@ export function createNotebookController(
   const demandedSemantic = async <T>(
     demand: (input: SemanticProjectInput) => Promise<T>,
   ): Promise<T> => {
-    const revisionAtDemand = revisionForDocument(currentDocument);
+    const revisionAtDemand = currentRevision;
     const alreadyAuthoritative =
       semanticPhase === "authoritative" &&
       publishedSemanticRevision === revisionAtDemand;
@@ -400,8 +552,7 @@ export function createNotebookController(
         !alreadyAuthoritative &&
         generation === semanticGeneration &&
         !expectedSemanticInterruption(error) &&
-        semanticCoordinator.state().currentRevision ===
-          revisionForDocument(currentDocument)
+        semanticCoordinator.state().currentRevision === semanticRevision
       ) {
         updateSemanticStatus("unavailable");
       }
@@ -410,22 +561,18 @@ export function createNotebookController(
   };
 
   const hydrate = async (snapshot: NotebookDocument): Promise<void> => {
-    const revision = revisionForDocument(snapshot);
+    const revision = currentRevision;
     synchronizeRuntimeRegistry(registry, snapshot);
     setRuntimeEpoch((current) => current + 1);
     let hydrated = false;
     try {
       const record = await cache?.load(snapshot);
-      if (
-        !record ||
-        disposed ||
-        revision !== revisionForDocument(currentDocument)
-      ) {
+      if (!record || disposed || revision !== currentRevision) {
         return;
       }
       const prepared = coordinator.seed(snapshot, record.prepared);
       currentPrepared = prepared;
-      semanticById = new Map();
+      semanticById.clear();
       rebuildVisiblePreparation();
       setPreparedBox({ current: prepared });
       setSemanticBox({ current: undefined });
@@ -433,6 +580,7 @@ export function createNotebookController(
       updateSemanticStatus("cached");
       for (const [cellId, value] of Object.entries(record.values)) {
         ensureCellRuntime(registry, cellId).hydrateCached(value);
+        hydratedCellIds.add(cellId);
       }
       setRuntimeEpoch((current) => current + 1);
       setCached(true);
@@ -446,10 +594,7 @@ export function createNotebookController(
           queuedRun = false;
           invalidateSemantic(currentDocument);
           void runDocument(currentDocument);
-        } else if (
-          !hydrated &&
-          revision === revisionForDocument(currentDocument)
-        ) {
+        } else if (!hydrated && revision === currentRevision) {
           void runDocument(snapshot);
         }
       }
@@ -477,6 +622,7 @@ export function createNotebookController(
     running,
     hydrating,
     cached,
+    preparedStale,
     runAll() {
       if (hydrating()) {
         queuedRun = true;
@@ -499,9 +645,10 @@ export function createNotebookController(
       const result = update(currentDocument, cellId, { source });
       if (!result.ok) return result.error;
 
-      currentDocument = result.document;
-      invalidateSemantic(result.document, [cellId]);
-      setDocumentBox({ current: result.document });
+      adoptDocument(result.document);
+      if (currentCell?.kind !== "text") {
+        invalidateSemantic(result.document, [cellId]);
+      }
       void runDocument(result.document, [cellId], true);
       return undefined;
     },
@@ -512,9 +659,8 @@ export function createNotebookController(
       const result = update(currentDocument, cellId, { name });
       if (!result.ok) return result.error;
 
-      currentDocument = result.document;
-      invalidateSemantic(result.document);
-      setDocumentBox({ current: result.document });
+      adoptDocument(result.document);
+      invalidateSemantic(result.document, [cellId]);
       void runDocument(result.document);
       return undefined;
     },
@@ -529,10 +675,20 @@ export function createNotebookController(
     },
     semanticFor(cellId) {
       semanticBox();
-      return {
-        status: semanticStatus(),
-        result: semanticById.get(cellId),
-      };
+      const phase = semanticStatus();
+      const result = semanticById.get(cellId);
+      const previous = semanticDisplayById.get(cellId);
+      const status = result === undefined ? phase : "authoritative";
+      const stable =
+        previous && sameSemanticResult(previous.result, result)
+          ? previous.result
+          : result;
+      if (previous && previous.status === status && previous.result === stable) {
+        return previous;
+      }
+      const display: CellSemanticDisplay = { status, result: stable };
+      semanticDisplayById.set(cellId, display);
+      return display;
     },
     completionsFor(cellId, position) {
       return demandedSemantic((input) =>
