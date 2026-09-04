@@ -1,0 +1,67 @@
+:root {
+  color-scheme: light;
+  --canvas: #f8f9fb;
+  --canvas-raised: #ffffff;
+  --code-canvas: #f1f3f7;
+  --surface-subtle: #eef1f5;
+  --line: #d9dde5;
+  --selection: #dfe4ff;
+  --accent: #4b55ad;
+  --accent-soft: #e7e9ff;
+  --danger: #b4233c;
+  --ink: #2c313a;
+  --ink-strong: #15181e;
+  --ink-muted: #606773;
+  --ink-faint: #8b929d;
+  --syntax-keyword: #7c3fad;
+  --syntax-name: #205f9b;
+  --syntax-string: #2e744b;
+  --syntax-number: #9a4e14;
+  --syntax-comment: #737a85;
+  --syntax-type: #87500d;
+  --syntax-operator: #4c5563;
+  --font-ui: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --shadow: none;
+  font-family: var(--font-ui);
+  color: var(--ink);
+  background: var(--canvas);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  min-width: 20rem;
+  min-height: 100%;
+  background: var(--canvas);
+}
+
+body {
+  min-width: 20rem;
+  min-height: 100vh;
+  margin: 0;
+  background: var(--canvas);
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+#root {
+  min-height: 100svh;
+  width: 100%;
+}
+
+::selection {
+  background: var(--selection);
+}
