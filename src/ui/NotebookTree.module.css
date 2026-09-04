@@ -229,7 +229,7 @@
   border-color: var(--danger);
 }
 
-.proseSource,
+.proseHost,
 .codeSource,
 .valueOutput,
 .markdownOutput,
@@ -240,17 +240,56 @@
   margin: 0.42rem 0 0 1.45rem;
 }
 
-.proseSource {
+.proseHost {
+  display: grid;
+  min-width: 0;
   max-width: 78rem;
+}
+
+.proseLayer {
+  grid-area: 1 / 1;
+  min-width: 0;
+  padding: 0.4rem 0.65rem;
   color: var(--ink);
+  font-family: var(--font-ui);
   font-size: 0.94rem;
   line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.prosePreview {
+  cursor: text;
+}
+
+.prosePreview:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.prosePreview > :first-child,
+.markdownOutput > :first-child {
+  margin-top: 0;
+}
+
+.prosePreview > :last-child,
+.markdownOutput > :last-child {
+  margin-bottom: 0;
+}
+
+.proseEditor {
+  background: var(--code-canvas);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-ui);
   white-space: pre-wrap;
 }
 
+.inactiveLayer {
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .codeSource,
-.valueOutput,
-.markdownOutput {
+.valueOutput {
   min-width: 0;
   max-width: 100%;
   overflow-x: auto;
@@ -279,12 +318,23 @@
 }
 
 .markdownOutput {
+  min-width: 0;
+  max-width: 100%;
   padding: 0.4rem 0;
   color: var(--ink-strong);
   background: transparent;
   font-family: var(--font-ui);
   font-size: 0.9rem;
   line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.prosePreview pre,
+.markdownOutput pre {
+  max-width: 100%;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  white-space: pre;
 }
 
 .pendingOutput {

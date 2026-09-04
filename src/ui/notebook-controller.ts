@@ -1,6 +1,9 @@
 import { createSignal, onSettled } from "solid-js";
 import type { Accessor } from "solid-js";
-import { FastPreparationCoordinator } from "../compiler/coordinator";
+import {
+  ExecutionPreparationScheduler,
+  FastPreparationCoordinator,
+} from "../compiler/coordinator";
 import type { PreparedCell, PreparedNotebook } from "../compiler/protocol";
 import { revisionForDocument } from "../compiler/protocol";
 import { TINY_COMMERCE_NOTEBOOK } from "../demo/notebook";
@@ -31,6 +34,8 @@ export interface NotebookController {
   readonly error: Accessor<string | undefined>;
   readonly running: Accessor<boolean>;
   runAll(): void;
+  runCell(cellId: CellId): void;
+  updateCellSource(cellId: CellId, source: string): CommandError | undefined;
   renameCell(cellId: CellId, name: string): CommandError | undefined;
   runtimeFor(cellId: CellId): CellRuntime | undefined;
   preparationFor(cellId: CellId): PreparedCell | undefined;
@@ -52,6 +57,9 @@ function disposeRegistry(registry: CellRuntimeRegistry): void {
 
 export function createNotebookController(): NotebookController {
   const coordinator = new FastPreparationCoordinator();
+  const executionScheduler = new ExecutionPreparationScheduler((document) =>
+    coordinator.prepareFast(document),
+  );
   const registry = createRuntimeRegistry();
   for (const cell of Object.values(TINY_COMMERCE_NOTEBOOK.cells)) {
     ensureCellRuntime(registry, cell.id);
@@ -77,7 +85,9 @@ export function createNotebookController(): NotebookController {
   const runDocument = async (
     snapshot: NotebookDocument,
     changedIds?: readonly CellId[],
+    delayed = false,
   ): Promise<void> => {
+    if (!delayed) executionScheduler.cancel();
     const run = ++activeRun;
     const revision = revisionForDocument(snapshot);
     if (currentPrepared?.revision !== revision) {
@@ -90,7 +100,9 @@ export function createNotebookController(): NotebookController {
     setRuntimeEpoch((current) => current + 1);
 
     try {
-      const prepared = await coordinator.prepareFast(snapshot);
+      const prepared = await (delayed
+        ? executionScheduler.schedule(snapshot)
+        : coordinator.prepareFast(snapshot));
       if (
         disposed ||
         run !== activeRun ||
@@ -125,6 +137,7 @@ export function createNotebookController(): NotebookController {
     return () => {
       disposed = true;
       activeRun += 1;
+      executionScheduler.cancel();
       coordinator.dispose();
       disposeRegistry(registry);
     };
@@ -137,6 +150,21 @@ export function createNotebookController(): NotebookController {
     running,
     runAll() {
       void runDocument(currentDocument);
+    },
+    runCell(cellId) {
+      void runDocument(currentDocument, [cellId]);
+    },
+    updateCellSource(cellId, source) {
+      const currentCell = currentDocument.cells[cellId];
+      if (currentCell?.source === source) return undefined;
+
+      const result = update(currentDocument, cellId, { source });
+      if (!result.ok) return result.error;
+
+      currentDocument = result.document;
+      setDocumentBox({ current: result.document });
+      void runDocument(result.document, [cellId], true);
+      return undefined;
     },
     renameCell(cellId, name) {
       const currentCell = currentDocument.cells[cellId];

@@ -2,7 +2,7 @@
 
 ## Current state
 
-Commits 1–6 are complete. The app now opens a deterministic Tiny Commerce notebook as a full-width recursive outliner, prepares it through one lazy fast worker, executes six cells reactively, and exposes collapse, zoom, breadcrumbs, independent disclosures, runtime state, provisional types, and atomic inline rename. Markdown output remains escaped plain text until Commit 7. No semantic worker, virtual TypeScript project, persistent compiler cache, rendered Markdown pipeline, persistence, or editor integration exists yet.
+Commits 1–7 are complete. The app uses a deterministic Tiny Commerce notebook as a full-width recursive outliner, with one lazy fast worker for preparation, normalized model commands for document and source changes, direct CodeMirror editing, and sanitized rendered Markdown. Semantic tooling, persistent compiler caching, and persistence remain deferred.
 
 ## Architecture decisions
 
@@ -10,7 +10,7 @@ Commits 1–6 are complete. The app now opens a deterministic Tiny Commerce note
 - Use Solid 2 APIs and semantics. Future reactive code must use the Solid 2 effect shape, settled lifecycle, boxed function signal values, and synchronous `peek()` reads described in `PROMPT.md`.
 - Keep serialized notebook documents separate from runtime signals, compiler state, and arbitrary JavaScript values.
 - Use CSS Modules for component-local structure and global custom properties for theme semantics. The layout remains flat and full-width independently of color choices.
-- Add dependencies only in the commit that uses them. CodeMirror, marked, DOMPurify, IndexedDB helpers, Oxc, and worker/compiler implementation packages are intentionally absent from the baseline.
+- Add dependencies only in the commit that uses them. Commit 7 directly owns CodeMirror, marked, DOMPurify, and its DOM-backed sanitizer test environment; IndexedDB helpers and semantic compiler implementation packages remain deferred.
 - Future notebook execution is an explicitly unsandboxed boundary: page-context execution must be treated as suitable only for trusted notebook code and must never be presented as safe isolation.
 
 ## Notebook model decisions
@@ -42,10 +42,13 @@ Commits 1–6 are complete. The app now opens a deterministic Tiny Commerce note
 ## Reactive outliner decisions
 
 - `src/demo/notebook.ts` is the deterministic Tiny Commerce fixture. Every cell has an explicit stable ID and programmatic name; its sources exercise direct, explicit `.children`, and expected-parent paths, while a separate executable branch remains available for later compiler-reuse demonstrations.
-- The App-owned notebook controller keeps serialized document, prepared compiler output, and application errors in separate boxed signals. It owns one lazy fast-preparation coordinator and one runtime registry, pre-creates initial cell runtimes in component setup, starts synchronization, preparation, and execution from `onSettled`, rejects stale completion writes by run and revision, and disposes worker/runtime state with the component.
+- The App-owned notebook controller keeps serialized document, prepared compiler output, and application errors in separate boxed signals. It owns one lazy fast-preparation coordinator, its existing 120 ms execution-preparation scheduler, and one runtime registry. Initial cell runtimes are created in component setup; synchronization, preparation, and execution start from `onSettled`; run and exact-revision guards prevent stale completion writes; component cleanup cancels scheduled work and disposes worker/runtime state.
 - Rename remains a model `update` command and changes only the programmatic name. Successful structural name changes prepare the new exact revision and rerun the whole document so newly resolving or missing paths cannot be skipped; invalid changes stay atomic and expose the typed command message inline.
-- Collapse, selection, zoom, disclosures, and rename draft/error state are transient, ID-keyed UI state. Breadcrumbs are derived from normalized structure rather than persisted metadata.
-- Commit 6 renders Markdown callback output only as plain text and uses a deliberately small defensive JavaScript value formatter. CodeMirror, marked/DOMPurify rendering, semantic TypeScript, and persistent caching remain owned by later commits.
+- Source edits also use the model `update` command. Ordinary edits replace the pending 120 ms preparation and execute only the edited cell plus the prepared graph's downstream closure. Mod/Ctrl+Enter cancels a pending delay and runs the same changed-cell path immediately.
+- Collapse, selection, zoom, disclosures, prose edit mode, and rename draft/error state are transient, ID-keyed UI state. Breadcrumbs are derived from normalized structure rather than persisted metadata.
+- `CodeEditor` owns direct CodeMirror `EditorView` construction and destruction in `onSettled`; reactive source synchronization dispatches only when editor and model text differ, so model updates do not reset the cursor in an echo loop. Executable cells use JavaScript/TypeScript syntax while prose uses Markdown syntax.
+- Prose preview and editor layers remain mounted in the same CSS grid area. The inactive layer uses only `visibility` and `pointer-events`, so both layers continue contributing to one stable host height while preview/edit state changes.
+- `renderMarkdown` is the sole HTML-producing Markdown path: marked parses source and DOMPurify sanitizes the result before either prose preview or executable Markdown output assigns `innerHTML`. JavaScript values continue through the structured defensive formatter, and runtime errors remain text.
 
 ## Package decisions
 
@@ -59,6 +62,10 @@ All direct dependency versions are exact in `package.json`; the lockfile capture
 | `typescript` | `5.9.3` | Pinned to the requested 5.9 line. |
 | `vite` / `vitest` | `8.2.2` / `5.0.0` | Compatible current releases sharing the supported Node baseline. |
 | `eslint` / `typescript-eslint` | `10.9.1` / `8.69.0` | Current compatible flat-config lint stack for TypeScript and TSX. |
+| `@codemirror/state` / `view` / `commands` / `language` | `6.7.3` / `6.43.11` / `6.11.0` / `6.12.4` | Direct editor state, view, command, and language primitives without a framework wrapper. |
+| `@codemirror/lang-javascript` / `lang-markdown` | `6.2.5` / `6.5.2` | JavaScript/TypeScript executable-cell syntax and prose Markdown syntax. |
+| `marked` / `dompurify` | `18.0.11` / `3.4.14` | Markdown parsing followed by DOM-based sanitization at the only HTML rendering boundary. |
+| `jsdom` | `29.0.0` | Development-only DOM environment for observable sanitizer behavior tests; its engine range matches the project Node baseline. |
 
 Node `22.13.0` or newer on an even-numbered supported release line is required by the selected Vite, Vitest, plugin, and ESLint engine ranges.
 
@@ -139,6 +146,20 @@ Final Commit 6 validation on 2026-09-04:
 - At 390 × 844, the tree, body, and document widths were 390 px with no horizontal overflow. Actions had opacity 1 and `pointer-events: auto`, and the report reached ready state.
 - Fresh-page errors were empty and the console contained only Vite connection debug messages.
 - Review fixes made structural rename a full rerun, added idle output pending text, emitted Solid-compatible ARIA strings, pre-created runtimes outside `onSettled`, and removed `<Show>` function-child reads that were untracked under Solid 2.
+
+Final Commit 7 validation on 2026-09-04:
+
+- `npm test -- --run` passed 14 files and 67 tests; `npm run typecheck`, `npm run lint`, and `npm run build` passed.
+- The offline production audit found 0 vulnerabilities.
+- The production build emitted the fast worker at 3,469.12 kB uncompressed, main JavaScript at 661.41 kB (229.59 kB gzip), CSS at 9.75 kB (2.65 kB gzip), and `index.html` at 0.50 kB (0.31 kB gzip).
+- A fresh desktop browser session reached `Notebook ready`, showed every executable cell succeeding, and rendered direct CodeMirror editors.
+- The desktop prose host, preview, and editor measured exactly 36.09375 px high before editing, during editing, and after returning to preview. Visibility switched between layers and focus moved to the labeled CodeMirror content.
+- At 390 × 844, the body and document widths were exactly 390 px and actions remained visible. After a multiline prose edit, the prose host, preview, and editor measured exactly 152.65625 px high in preview, edit, and post-edit preview states.
+- Editing the products source reran products, priced products, metrics, and report; regions and the unrelated branch remained at run 1. The edited notebook produced a 55.20 final price and average plus a one-product report. Mod+Enter advanced the current changed-cell path.
+- Prose and executable Markdown payloads containing scripts, event handlers, and `javascript:` URLs left the global XSS sentinel at 0, produced no script nodes, event-handler attributes, or dangerous link nodes, and preserved safe headings.
+- Browser page errors were empty; the console contained only Vite connection debug messages.
+- A fresh axe scan reported one serious color-contrast violation across 10 faint kind labels and one incomplete result. Contrast polish remains assigned to Commit 10; Commit 7 does not claim zero accessibility issues.
+- The sanitizer test was corrected during review to assert DOM security behavior rather than incidental marked output such as anchor counts or raw serialized text.
 
 ## Performance measurements
 

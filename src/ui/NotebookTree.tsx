@@ -1,8 +1,10 @@
-import { For, Show, createMemo, onSettled } from "solid-js";
+import { For, Show, createMemo, createSignal, onSettled } from "solid-js";
 import type { Cell, CellId, CellKind } from "../model/types";
 import type { CellRunStatus } from "../runtime/registry";
+import CodeEditor from "./CodeEditor";
 import { formatValue } from "./format-value";
 import type { NotebookController } from "./notebook-controller";
+import { renderMarkdown } from "./render-markdown";
 import { breadcrumbsFor } from "./tree-helpers";
 import type { NotebookViewState, DisclosurePanel } from "./view-state";
 import styles from "./NotebookTree.module.css";
@@ -31,6 +33,11 @@ interface RuntimeOutputProps {
   readonly kind: CellKind;
   readonly status: CellRunStatus;
   readonly value: unknown;
+}
+
+interface SourceEditorProps {
+  readonly cell: Cell;
+  readonly controller: NotebookController;
 }
 
 const KIND_LABEL: Record<CellKind, string> = {
@@ -107,12 +114,12 @@ function RenameInput(props: RenameInputProps) {
 }
 
 function RuntimeOutput(props: RuntimeOutputProps) {
-  const output = createMemo(() => {
-    if (props.kind === "markdown" && typeof props.value === "string") {
-      return props.value;
-    }
-    return formatValue(props.value);
-  });
+  const markdownHtml = createMemo(() =>
+    props.kind === "markdown" && typeof props.value === "string"
+      ? renderMarkdown(props.value)
+      : undefined,
+  );
+  const formattedValue = createMemo(() => formatValue(props.value));
 
   return (
     <Show
@@ -123,16 +130,82 @@ function RuntimeOutput(props: RuntimeOutputProps) {
         </Show>
       }
     >
-      <pre
-        class={
-          props.kind === "markdown"
-            ? styles.markdownOutput
-            : styles.valueOutput
-        }
+      <Show
+        when={markdownHtml() !== undefined}
+        fallback={<pre class={styles.valueOutput}>{formattedValue()}</pre>}
       >
-        {output()}
-      </pre>
+        <div
+          class={styles.markdownOutput}
+          data-markdown-output=""
+          innerHTML={markdownHtml() ?? ""}
+        />
+      </Show>
     </Show>
+  );
+}
+
+function ProseSource(props: SourceEditorProps) {
+  const [editing, setEditing] = createSignal(false);
+  const previewHtml = createMemo(() => renderMarkdown(props.cell.source));
+  const enterEditMode = () => setEditing(true);
+
+  return (
+    <div class={styles.proseHost} data-prose-editor={props.cell.id}>
+      <div
+        class={`${styles.proseLayer} ${styles.prosePreview} ${
+          editing() ? styles.inactiveLayer : ""
+        }`}
+        role="button"
+        tabindex={editing() ? -1 : 0}
+        aria-label={`Edit prose for ${props.cell.id}`}
+        aria-hidden={editing() ? "true" : "false"}
+        innerHTML={previewHtml()}
+        onClick={(event) => {
+          event.preventDefault();
+          enterEditMode();
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            enterEditMode();
+          }
+        }}
+      />
+      <div
+        class={`${styles.proseLayer} ${styles.proseEditor} ${
+          editing() ? "" : styles.inactiveLayer
+        }`}
+        aria-hidden={editing() ? "false" : "true"}
+      >
+        <CodeEditor
+          source={props.cell.source}
+          kind="text"
+          ariaLabel={`Prose source for ${props.cell.id}`}
+          focused={editing()}
+          onChange={(source) =>
+            props.controller.updateCellSource(props.cell.id, source)
+          }
+          onRun={() => props.controller.runCell(props.cell.id)}
+          onBlur={() => setEditing(false)}
+        />
+      </div>
+    </div>
+  );
+}
+
+function ExecutableSource(props: SourceEditorProps) {
+  return (
+    <div class={styles.codeSource} data-source-editor={props.cell.id}>
+      <CodeEditor
+        source={props.cell.source}
+        kind={props.cell.kind}
+        ariaLabel={`Source for ${props.cell.id}`}
+        onChange={(source) =>
+          props.controller.updateCellSource(props.cell.id, source)
+        }
+        onRun={() => props.controller.runCell(props.cell.id)}
+      />
+    </div>
   );
 }
 
@@ -363,9 +436,17 @@ function CellNode(props: CellNodeProps) {
             >
               <Show
                 when={currentCell().kind === "text"}
-                fallback={<pre class={styles.codeSource}>{currentCell().source}</pre>}
+                fallback={
+                  <ExecutableSource
+                    cell={currentCell()}
+                    controller={props.controller}
+                  />
+                }
               >
-                <p class={styles.proseSource}>{currentCell().source}</p>
+                <ProseSource
+                  cell={currentCell()}
+                  controller={props.controller}
+                />
               </Show>
             </Show>
 
