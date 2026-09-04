@@ -2,7 +2,7 @@
 
 ## Current state
 
-Commits 1–2 are complete. The project now has a conventional client-only Vite/Solid 2 application baseline plus a standalone normalized notebook model with Unicode naming rules, malformed-snapshot diagnostics, pure structural commands, and focused model tests. No sample notebook, editor, compiler worker, runtime, cache, Markdown pipeline, persistence, or model-to-UI integration exists yet; Commit 3 is next.
+Commits 1–3 are complete. The project has a conventional client-only Vite/Solid 2 application baseline, a standalone normalized notebook model, and focused modules for structural path resolution, TypeScript AST dependency extraction, and ID-based graph operations. Commit 4 reactive notebook transactions are next. No sample notebook, execution registry, signals, compiler worker/coordinator, cache, Markdown pipeline, persistence, or model-to-UI integration exists yet.
 
 ## Architecture decisions
 
@@ -22,6 +22,13 @@ Commits 1–2 are complete. The project now has a conventional client-only Vite/
 - Cell names use Unicode ECMAScript identifier syntax, with `$`, `_`, join controls, and Unicode identifier characters supported. Handle fields `value`, `children`, `id`, `name`, `kind`, `text`, `update`, `append`, `remove`, and `replaceChildren` are reserved. Uniqueness is sibling-scoped; ancestor, descendant, and unrelated branches may reuse a name.
 - Omitted create names come from readable adjective/noun pairs, probe deterministically from an injectable random source, avoid sibling collisions, and use numeric suffixes only after exhausting the base pairs. Hard-coded notebook data must still supply explicit deterministic names.
 - Whole-document validation checks root/key/identity consistency, cell data shapes and serializable metadata, child references, duplicate children and declared IDs, parent cardinality, reachability, cycles, name validity/reservations, and sibling collisions. Command errors and validation diagnostics use stable string codes.
+
+## Static runtime analysis decisions
+
+- `src/runtime/resolve-path.ts` is the single structural definition of notebook path meaning. Origins are resolved relative to the analyzed cell (`root`, `parent`, or `self`); direct named hops and explicit `.children` hops traverse the same ordered child IDs; only a terminal `.value` is an executable dependency read.
+- Path outcomes are stable typed results: resolved targets carry permanent `CellId`s, while missing, ambiguous, dynamic, and invalid outcomes carry source spans and never add guessed edges. Repeated references to the same child ID remain resolvable, but distinct same-name children or multiple parents in malformed snapshots are ambiguous.
+- `src/runtime/analyze-dependencies.ts` owns the TypeScript compiler API import. It analyzes `$` and `md` callbacks without executing code, preserves half-open source offsets and explicit `$<Type>` text, respects callback lexical shadowing including switch `CaseBlock` scope, reports computed or aliased handles, de-duplicates resolved target IDs, and leaves source unchanged. Scalar handle metadata and chains beyond runtime `.value` data are not misclassified as handle aliases or dependency paths; nested `.value` reads stop at the first runtime-value boundary. Text cells have no executable dependencies, and syntax/path failures remain per-cell issues.
+- Graph order is root-first document traversal followed by any remaining cell keys. Dependency and dependent maps preserve that order; topological layers batch ready acyclic cells; strongly connected groups include self-cycles; cells downstream of cycles are reported separately without blocking unrelated branches. Downstream closure includes known changed IDs and every transitive dependent in document order.
 
 ## Package decisions
 
@@ -68,6 +75,16 @@ Final Commit 2 validation on 2026-09-04:
 - The online `npm audit --omit=dev` endpoint timed out twice; the immediate cache-backed `npm audit --omit=dev --offline` retry found 0 vulnerabilities.
 - A throwaway `tsx` smoke scenario created `root`, `analysis`, and `note`; moved `note` under `analysis`; verified its parent lookup; removed the `analysis` subtree; and produced a normalized root-only document.
 - No browser test was required because Commit 2 adds no visible behavior.
+
+Final Commit 3 validation on 2026-09-04:
+
+- `npm test -- --run` passed 6 test files and 37 tests; the runtime-specific subset passed 3 files and 15 tests.
+- `npm run typecheck` passed.
+- `npm run lint` passed.
+- `npm run build` passed.
+- The offline production audit found 0 vulnerabilities.
+- A throwaway `tsx` smoke scenario built `root`, `products`, and `metrics`; observed layers `[root, products] -> [metrics]`, the `metrics` dependency `products`, and downstream closure `[products, metrics]`.
+- No browser check was required because Commit 3 adds no visible behavior.
 
 ## Performance measurements
 
