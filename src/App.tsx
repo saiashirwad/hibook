@@ -18,18 +18,22 @@ export default function App() {
         </div>
         <div class={styles.runGroup}>
           <span class={styles.runMessage} role="status" aria-live="polite">
-            {controller.running()
-              ? "Preparing and running…"
-              : controller.error()
-                ? "Execution failed"
-                : controller.prepared()
-                  ? "Notebook ready"
-                  : "Waiting to start…"}
+            {controller.hydrating()
+              ? "Checking saved results…"
+              : controller.running()
+                ? "Preparing and running…"
+                : controller.error()
+                  ? "Execution failed"
+                  : controller.cached()
+                    ? "Cached results · run to refresh"
+                    : controller.prepared()
+                      ? "Notebook ready"
+                      : "Waiting to start…"}
           </span>
           <button
             type="button"
             class={styles.runButton}
-            disabled={controller.running()}
+            disabled={controller.hydrating() || controller.running()}
             onClick={() => controller.runAll()}
           >
             Run all

@@ -3,6 +3,7 @@ import type { Cell, NotebookDocument } from "../model/types";
 import { prepareExecution } from "./fast-prepare";
 import {
   EXECUTION_DEBOUNCE_MS,
+  FAST_COMPLETED_REVISION_LIMIT,
   ExecutionPreparationScheduler,
   FastPreparationCoordinator,
   FastPreparationDisposedError,
@@ -208,6 +209,50 @@ describe("fast preparation coordinator", () => {
       FastPreparationProtocolError,
     );
     expect(coordinator.current()).toBeUndefined();
+  });
+
+  it("seeds exact prepared output without constructing a worker and bounds completed revisions", async () => {
+    let constructions = 0;
+    const worker = new ControlledWorker();
+    const coordinator = new FastPreparationCoordinator(() => {
+      constructions += 1;
+      return worker;
+    });
+    const revisions = Array.from(
+      { length: FAST_COMPLETED_REVISION_LIMIT + 1 },
+      (_, index) => document(`$(() => ${index})`),
+    );
+
+    for (const notebook of revisions) {
+      coordinator.seed(notebook, prepareExecution(notebook));
+    }
+    const newest = revisions.at(-1)!;
+    await expect(coordinator.prepareFast(newest)).resolves.toMatchObject({
+      revision: JSON.stringify(newest),
+    });
+    expect(constructions).toBe(0);
+    expect(coordinator.state()).toMatchObject({
+      workerConstructed: false,
+      completedCount: FAST_COMPLETED_REVISION_LIMIT,
+    });
+
+    const evicted = coordinator.prepareFast(revisions[0]!);
+    expect(constructions).toBe(1);
+    expect(worker.requests).toHaveLength(1);
+    worker.succeed(worker.requests[0]!);
+    await evicted;
+
+    const mismatched = prepareExecution(newest);
+    expect(() =>
+      coordinator.seed(revisions[0]!, mismatched),
+    ).toThrow(FastPreparationProtocolError);
+    const malformed = {
+      ...prepareExecution(revisions[0]!),
+      cells: prepareExecution(revisions[0]!).cells.slice(0, 1),
+    };
+    expect(() => coordinator.seed(revisions[0]!, malformed)).toThrow(
+      FastPreparationProtocolError,
+    );
   });
 
   it("rejects typed worker failures, worker crashes, and pending work on disposal", async () => {

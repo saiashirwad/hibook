@@ -123,19 +123,32 @@ function RuntimeOutput(props: RuntimeOutputProps) {
 
   return (
     <Show
-      when={props.status === "success"}
+      when={props.status === "success" || props.status === "cached"}
       fallback={
         <Show when={props.status === "idle" || props.status === "pending"}>
           <p class={styles.pendingOutput}>Waiting for execution…</p>
         </Show>
       }
     >
+      <Show when={props.status === "cached"}>
+        <p class={styles.cachedNotice}>Cached output · may be stale</p>
+      </Show>
       <Show
         when={markdownHtml() !== undefined}
-        fallback={<pre class={styles.valueOutput}>{formattedValue()}</pre>}
+        fallback={
+          <pre
+            class={`${styles.valueOutput} ${
+              props.status === "cached" ? styles.cachedOutput : ""
+            }`}
+          >
+            {formattedValue()}
+          </pre>
+        }
       >
         <div
-          class={styles.markdownOutput}
+          class={`${styles.markdownOutput} ${
+            props.status === "cached" ? styles.cachedOutput : ""
+          }`}
           data-markdown-output=""
           innerHTML={markdownHtml() ?? ""}
         />

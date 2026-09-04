@@ -1,3 +1,7 @@
+import {
+  NOTEBOOK_CACHE_REVISION_LIMIT,
+  validatePreparedNotebook,
+} from "../cache/record";
 import type { NotebookDocument } from "../model/types";
 import type {
   FastPrepareRequest,
@@ -7,6 +11,7 @@ import type {
 import { revisionForDocument } from "./protocol";
 
 export const EXECUTION_DEBOUNCE_MS = 120;
+export const FAST_COMPLETED_REVISION_LIMIT = NOTEBOOK_CACHE_REVISION_LIMIT;
 
 export interface FastWorkerLike {
   onmessage: ((event: { readonly data: FastPrepareResponse }) => void) | null;
@@ -36,6 +41,7 @@ export interface FastCoordinatorState {
   readonly workerConstructionCount: number;
   readonly pendingCount: number;
   readonly currentRevision: string | undefined;
+  readonly completedCount: number;
   readonly disposed: boolean;
 }
 
@@ -91,6 +97,25 @@ export class FastPreparationCoordinator {
     }
     return revision;
   }
+  seed(document: NotebookDocument, prepared: PreparedNotebook): PreparedNotebook {
+    if (this.#disposed) throw new FastPreparationDisposedError();
+    const validated = validatePreparedNotebook(prepared, document);
+    if (!validated) {
+      throw new FastPreparationProtocolError(
+        "Seeded prepared notebook does not exactly match the document",
+      );
+    }
+    const revision = this.synchronize(document);
+    if (this.#inFlightByRevision.has(revision)) {
+      throw new FastPreparationProtocolError(
+        "Cannot seed a revision while its preparation is in flight",
+      );
+    }
+    this.#currentPrepared = validated;
+    this.#remember(revision, validated, Promise.resolve(validated));
+    return validated;
+  }
+
 
   prepareFast(document: NotebookDocument): Promise<PreparedNotebook> {
     if (this.#disposed) {
@@ -159,6 +184,7 @@ export class FastPreparationCoordinator {
       workerConstructed: this.#worker !== undefined,
       workerConstructionCount: this.#workerConstructionCount,
       pendingCount: this.#pendingByRequest.size,
+      completedCount: this.#completedByRevision.size,
       currentRevision: this.#currentRevision,
       disposed: this.#disposed,
     };
@@ -239,12 +265,23 @@ export class FastPreparationCoordinator {
       pending.revision === this.#currentRevision
     ) {
       this.#currentPrepared = response.prepared;
-      this.#completedByRevision.set(pending.revision, {
-        prepared: response.prepared,
-        promise: pending.promise,
-      });
+      this.#remember(pending.revision, response.prepared, pending.promise);
     }
     pending.resolve(response.prepared);
+  }
+
+  #remember(
+    revision: string,
+    prepared: PreparedNotebook,
+    promise: Promise<PreparedNotebook>,
+  ): void {
+    this.#completedByRevision.delete(revision);
+    this.#completedByRevision.set(revision, { prepared, promise });
+    while (this.#completedByRevision.size > FAST_COMPLETED_REVISION_LIMIT) {
+      const oldest = this.#completedByRevision.keys().next().value;
+      if (oldest === undefined) break;
+      this.#completedByRevision.delete(oldest);
+    }
   }
 
   #removePending(pending: PendingPreparation): void {

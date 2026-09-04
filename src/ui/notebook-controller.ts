@@ -1,5 +1,7 @@
 import { createSignal, onSettled } from "solid-js";
 import type { Accessor } from "solid-js";
+import { IndexedDbNotebookCache } from "../cache/indexeddb";
+import type { NotebookCache } from "../cache/indexeddb";
 import {
   ExecutionPreparationScheduler,
   FastPreparationCoordinator,
@@ -44,6 +46,7 @@ interface Box<T> {
 }
 
 export type SemanticDisplayStatus =
+  | "cached"
   | "provisional"
   | "pending"
   | "authoritative"
@@ -59,6 +62,8 @@ export interface NotebookController {
   readonly prepared: Accessor<PreparedNotebook | undefined>;
   readonly error: Accessor<string | undefined>;
   readonly running: Accessor<boolean>;
+  readonly hydrating: Accessor<boolean>;
+  readonly cached: Accessor<boolean>;
   runAll(): void;
   runCell(cellId: CellId): void;
   updateCellSource(cellId: CellId, source: string): CommandError | undefined;
@@ -69,6 +74,13 @@ export interface NotebookController {
   completionsFor(cellId: CellId, position: number): Promise<SemanticCompletionResult>;
   diagnosticsFor(cellId: CellId): Promise<readonly SemanticDiagnostic[]>;
   quickInfoFor(cellId: CellId, position: number): Promise<SemanticQuickInfo | undefined>;
+}
+
+export interface NotebookControllerOptions {
+  readonly document?: NotebookDocument;
+  readonly cache?: NotebookCache;
+  readonly fastCoordinator?: FastPreparationCoordinator;
+  readonly semanticCoordinator?: SemanticCoordinator;
 }
 
 function errorMessage(error: unknown): string {
@@ -92,21 +104,33 @@ function expectedSemanticInterruption(error: unknown): boolean {
   );
 }
 
-export function createNotebookController(): NotebookController {
-  const coordinator = new FastPreparationCoordinator();
+export function createNotebookController(
+  options: NotebookControllerOptions = {},
+): NotebookController {
+  const initialDocument = options.document ?? TINY_COMMERCE_NOTEBOOK;
+  const coordinator = options.fastCoordinator ?? new FastPreparationCoordinator();
   const executionScheduler = new ExecutionPreparationScheduler((document) =>
     coordinator.prepareFast(document),
   );
-  const semanticCoordinator = new SemanticCoordinator();
+  const semanticCoordinator =
+    options.semanticCoordinator ?? new SemanticCoordinator();
   const semanticScheduler = new SemanticInferenceScheduler((input) =>
     semanticCoordinator.infer(input),
   );
+  let cache = options.cache;
+  if (!cache) {
+    try {
+      cache = new IndexedDbNotebookCache();
+    } catch {
+      cache = undefined;
+    }
+  }
   const registry = createRuntimeRegistry();
-  for (const cell of Object.values(TINY_COMMERCE_NOTEBOOK.cells)) {
+  for (const cell of Object.values(initialDocument.cells)) {
     ensureCellRuntime(registry, cell.id);
   }
   const [documentBox, setDocumentBox] = createSignal<Box<NotebookDocument>>({
-    current: TINY_COMMERCE_NOTEBOOK,
+    current: initialDocument,
   });
   const [preparedBox, setPreparedBox] = createSignal<
     Box<PreparedNotebook | undefined>
@@ -120,9 +144,11 @@ export function createNotebookController(): NotebookController {
     current: undefined,
   });
   const [running, setRunning] = createSignal(false);
+  const [hydrating, setHydrating] = createSignal(true);
+  const [cached, setCached] = createSignal(false);
   const [runtimeEpoch, setRuntimeEpoch] = createSignal(0);
 
-  let currentDocument = TINY_COMMERCE_NOTEBOOK;
+  let currentDocument = initialDocument;
   let currentPrepared: PreparedNotebook | undefined;
   let preparedById = new Map<CellId, PreparedCell>();
   let semanticById = new Map<CellId, SemanticCellResult>();
@@ -131,6 +157,7 @@ export function createNotebookController(): NotebookController {
   let semanticPhase: SemanticDisplayStatus = "provisional";
   let publishedSemanticRevision: string | undefined;
   let activeRun = 0;
+  let queuedRun = false;
   let disposed = false;
 
   const rebuildVisiblePreparation = (): void => {
@@ -150,6 +177,28 @@ export function createNotebookController(): NotebookController {
       }),
     );
   };
+
+  const persist = (
+    snapshot: NotebookDocument,
+    prepared: PreparedNotebook,
+  ): void => {
+    if (!cache || disposed || prepared.revision !== revisionForDocument(snapshot)) {
+      return;
+    }
+    const values: Array<readonly [CellId, unknown]> = [];
+    for (const [cellId, runtime] of registry) {
+      if (
+        runtime.status() === "success" ||
+        runtime.status() === "cached"
+      ) {
+        values.push([cellId, runtime.peek()]);
+      }
+    }
+    void cache.save(snapshot, prepared, values).catch(() => {
+      // Persistent cache availability never changes an execution outcome.
+    });
+  };
+
 
   const updateSemanticStatus = (status: SemanticDisplayStatus): void => {
     semanticPhase = status;
@@ -178,10 +227,27 @@ export function createNotebookController(): NotebookController {
     semanticById = new Map(
       semantic.cells.map((cell) => [cell.cellId, cell] as const),
     );
+    if (currentPrepared?.revision === revision) {
+      currentPrepared = {
+        ...currentPrepared,
+        cells: currentPrepared.cells.map((prepared) => {
+          const semanticCell = semanticById.get(prepared.cellId);
+          return semanticCell
+            ? {
+                ...prepared,
+                type: semanticCell.type,
+                status: semanticCell.status,
+              }
+            : prepared;
+        }),
+      };
+      setPreparedBox({ current: currentPrepared });
+    }
     rebuildVisiblePreparation();
     setSemanticBox({ current: semantic });
     publishedSemanticRevision = revision;
     updateSemanticStatus("authoritative");
+    if (currentPrepared) persist(currentDocument, currentPrepared);
     return true;
   };
 
@@ -238,6 +304,7 @@ export function createNotebookController(): NotebookController {
     if (!delayed) executionScheduler.cancel();
     const run = ++activeRun;
     const revision = revisionForDocument(snapshot);
+    setCached(false);
     if (currentPrepared?.revision !== revision) {
       currentPrepared = undefined;
       setPreparedBox({ current: undefined });
@@ -270,6 +337,7 @@ export function createNotebookController(): NotebookController {
         changedIds === undefined ? { prepared } : { prepared, changedIds },
       );
       setRuntimeEpoch((current) => current + 1);
+      persist(snapshot, prepared);
       scheduleSemantic(snapshot, prepared, changedIds);
     } catch (error) {
       if (!disposed && run === activeRun) {
@@ -341,13 +409,61 @@ export function createNotebookController(): NotebookController {
     }
   };
 
+  const hydrate = async (snapshot: NotebookDocument): Promise<void> => {
+    const revision = revisionForDocument(snapshot);
+    synchronizeRuntimeRegistry(registry, snapshot);
+    setRuntimeEpoch((current) => current + 1);
+    let hydrated = false;
+    try {
+      const record = await cache?.load(snapshot);
+      if (
+        !record ||
+        disposed ||
+        revision !== revisionForDocument(currentDocument)
+      ) {
+        return;
+      }
+      const prepared = coordinator.seed(snapshot, record.prepared);
+      currentPrepared = prepared;
+      semanticById = new Map();
+      rebuildVisiblePreparation();
+      setPreparedBox({ current: prepared });
+      setSemanticBox({ current: undefined });
+      publishedSemanticRevision = undefined;
+      updateSemanticStatus("cached");
+      for (const [cellId, value] of Object.entries(record.values)) {
+        ensureCellRuntime(registry, cellId).hydrateCached(value);
+      }
+      setRuntimeEpoch((current) => current + 1);
+      setCached(true);
+      hydrated = true;
+    } catch {
+      // IndexedDB and malformed records degrade to the normal execution path.
+    } finally {
+      if (!disposed) {
+        setHydrating(false);
+        if (queuedRun) {
+          queuedRun = false;
+          invalidateSemantic(currentDocument);
+          void runDocument(currentDocument);
+        } else if (
+          !hydrated &&
+          revision === revisionForDocument(currentDocument)
+        ) {
+          void runDocument(snapshot);
+        }
+      }
+    }
+  };
+
   onSettled(() => {
-    void runDocument(currentDocument);
+    void hydrate(currentDocument);
     return () => {
       disposed = true;
       activeRun += 1;
       executionScheduler.cancel();
       semanticScheduler.cancel();
+      cache?.dispose();
       coordinator.dispose();
       semanticCoordinator.dispose();
       disposeRegistry(registry);
@@ -359,11 +475,21 @@ export function createNotebookController(): NotebookController {
     prepared: () => preparedBox().current,
     error: () => errorBox().current,
     running,
+    hydrating,
+    cached,
     runAll() {
+      if (hydrating()) {
+        queuedRun = true;
+        return;
+      }
       invalidateSemantic(currentDocument);
       void runDocument(currentDocument);
     },
     runCell(cellId) {
+      if (hydrating()) {
+        queuedRun = true;
+        return;
+      }
       void runDocument(currentDocument, [cellId]);
     },
     updateCellSource(cellId, source) {

@@ -56,6 +56,25 @@ describe("cell runtime registry", () => {
     expect(runtime.version()).toBe(3);
   });
 
+  it("hydrates copied cached values without claiming a fresh run version", () => {
+    const runtime = createCellRuntime();
+    const cached = { rows: [{ id: 1 }] };
+
+    expect(runtime.hydrateCached(cached)).toBe(true);
+    expect(runtime.status()).toBe("cached");
+    expect(runtime.version()).toBe(0);
+    expect(runtime.peek()).toEqual(cached);
+    expect(runtime.peek()).not.toBe(cached);
+
+    cached.rows[0]!.id = 2;
+    expect(runtime.peek()).toEqual({ rows: [{ id: 1 }] });
+
+    runtime.publish({ rows: [{ id: 3 }] });
+    expect(runtime.status()).toBe("success");
+    expect(runtime.version()).toBe(1);
+    expect(runtime.peek()).toEqual({ rows: [{ id: 3 }] });
+  });
+
   it("stringifies hostile unknown failures without masking the failed run", () => {
     const runtime = createCellRuntime();
     const hostile = Object.create(null) as object;

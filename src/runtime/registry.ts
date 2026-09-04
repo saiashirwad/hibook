@@ -1,3 +1,4 @@
+import { copyJsonSafeValue } from "../cache/record";
 import { createRoot, createSignal } from "solid-js";
 import type { Accessor } from "solid-js";
 import type { CellId, NotebookDocument } from "../model/types";
@@ -6,6 +7,7 @@ export type CellRunStatus =
   | "idle"
   | "pending"
   | "success"
+  | "cached"
   | "error"
   | "cycle";
 
@@ -16,6 +18,7 @@ export interface CellRuntime<T = unknown> {
   readonly error: Accessor<string | undefined>;
   readonly version: Accessor<number>;
   publish(value: T): void;
+  hydrateCached(value: unknown): boolean;
   begin(): void;
   fail(error: unknown): void;
   markCycle(): void;
@@ -75,6 +78,16 @@ export function createCellRuntime<T = unknown>(initialValue?: T): CellRuntime<T>
         setValueBox({ value: nextValue });
         setError(undefined);
         resolve("success");
+      },
+      hydrateCached(cachedValue: unknown): boolean {
+        if (disposed) return false;
+        const copied = copyJsonSafeValue(cachedValue);
+        if (!copied.ok) return false;
+        currentValue = copied.value as T;
+        setValueBox({ value: currentValue });
+        setError(undefined);
+        setStatus("cached");
+        return true;
       },
       begin(): void {
         if (disposed) {

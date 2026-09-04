@@ -159,6 +159,10 @@
 .status-pending {
   color: var(--accent);
 }
+.status-cached {
+  color: var(--ink-faint);
+}
+
 
 
 .actions {
@@ -233,6 +237,7 @@
 .codeSource,
 .valueOutput,
 .markdownOutput,
+.cachedNotice,
 .pendingOutput,
 .typePanel,
 .inlineError,
@@ -341,11 +346,22 @@
   color: var(--ink-muted);
   font-size: 0.8rem;
 }
+.cachedNotice {
+  color: var(--ink-faint);
+  font-size: 0.72rem;
+}
+
+.cachedOutput {
+  border-left: 2px solid var(--ink-faint);
+  color: var(--ink-muted);
+}
+
 
 .inlineError,
 .runtimeError {
   padding: 0.36rem 0.5rem;
   border-left: 2px solid var(--danger);
+
   color: var(--danger);
   background: var(--surface-subtle);
   font-size: 0.78rem;
@@ -360,6 +376,10 @@
   font-size: 0.74rem;
   line-height: 1.45;
 }
+.typePanel[data-semantic-status="cached"] {
+  border-left-color: var(--ink-faint);
+}
+
 
 .typePanel[data-semantic-status="pending"] {
   border-left-color: var(--accent);

@@ -1,6 +1,6 @@
 # HiBook roadmap
 
-Status: commits 1–8 are completed; commit 9 is pending.
+Status: commits 1–9 are completed; commit 10 is pending.
 
 1. **Completed — `chore: establish application and quality baseline`**  
    Vite, Solid, tooling, durable notes, semantic theme tokens, and the honest full-page shell.
@@ -18,14 +18,14 @@ Status: commits 1–8 are completed; commit 9 is pending.
    Direct CodeMirror integration, prose height parity, Mod+Enter, marked plus DOMPurify, and output formatting.
 8. **Completed — `compiler: add semantic inference and editor tooling`**  
    Virtual project, layered inference, completion, diagnostics, hover, and lazy semantic startup.
-9. **Pending — `cache: hydrate exact notebook revisions`**  
+9. **Completed — `cache: hydrate exact notebook revisions`**
    Versioned bounded IndexedDB records, JSON-safe values, and hydration before worker startup.
 10. **Pending — `ui: complete responsive and accessible demo polish`**  
     Desktop and mobile browser checks, geometry, overflow, hover isolation, accessibility, and measurements.
 
 ## Demo boundary
 
-The planned demo is a deterministic Tiny Commerce notebook that demonstrates the normalized outline, reactive synchronous execution, safe Markdown, notebook-aware TypeScript tooling, and exact-revision hydration. Commits 6–8 complete the worker-backed outliner, direct CodeMirror editing, sanitized rendered Markdown, semantic inference, and editor tooling; exact-revision cache hydration remains pending in Commit 9.
+The planned demo is a deterministic Tiny Commerce notebook that demonstrates the normalized outline, reactive synchronous execution, safe Markdown, notebook-aware TypeScript tooling, and exact-revision hydration. Commits 6–9 complete the worker-backed outliner, direct CodeMirror editing, sanitized rendered Markdown, semantic inference and editor tooling, and exact-revision cache hydration; responsive and accessible demo polish remains in Commit 10.
 
 ## Deferred beyond the demo
 
