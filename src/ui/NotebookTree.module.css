@@ -172,7 +172,8 @@
 }
 
 .cellName {
-  min-width: 0;
+  flex: none;
+  max-width: 60%;
   overflow: hidden;
   color: var(--ink-strong);
   font-size: 0.92rem;
@@ -198,13 +199,19 @@
   white-space: nowrap;
 }
 
-.pin {
+.actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.1rem;
+  margin-left: auto;
+}
+
+.iconButton {
   display: inline-grid;
   width: 1.4rem;
   height: 1.4rem;
   place-items: center;
   flex: none;
-  margin-left: auto;
   padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
@@ -215,19 +222,46 @@
   transition: opacity 80ms ease-out;
 }
 
-.heading:hover .pin,
-.pin:focus-visible,
-.pin[aria-pressed="true"] {
+.heading:hover .iconButton,
+.actions:focus-within .iconButton,
+.iconButton[aria-pressed="true"] {
   opacity: 1;
 }
 
-.pin:hover {
+.iconButton:hover {
   color: var(--ink-strong);
   background: var(--surface-subtle);
 }
 
-.pin[aria-pressed="true"] {
+.iconButton[aria-pressed="true"] {
   color: var(--accent);
+}
+
+.kindChooser {
+  display: inline-flex;
+  gap: 0.1rem;
+  padding: 0.1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--canvas-raised);
+}
+
+.kindOption {
+  padding: 0.05rem 0.4rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--ink-muted);
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}
+
+.kindOption:hover,
+.kindOption:focus-visible {
+  color: var(--ink-strong);
+  background: var(--surface-subtle);
+  outline: none;
 }
 
 .renameInput {
@@ -385,7 +419,7 @@
 
 .chevron:focus-visible,
 .bullet:focus-visible,
-.pin:focus-visible,
+.iconButton:focus-visible,
 .breadcrumbButton:focus-visible {
   outline: 1px solid var(--accent);
   outline-offset: 1px;
@@ -393,7 +427,7 @@
 
 @media (hover: none) {
   .chevron,
-  .pin {
+  .iconButton {
     opacity: 1;
   }
 }
@@ -412,7 +446,7 @@
 @media (prefers-reduced-motion: reduce) {
   .chevron,
   .bullet::before,
-  .pin {
+  .iconButton {
     transition: none;
   }
 }

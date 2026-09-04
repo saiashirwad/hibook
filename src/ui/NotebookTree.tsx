@@ -1,4 +1,5 @@
-import { For, Show, createMemo, onSettled } from "solid-js";
+import { EditorView } from "@codemirror/view";
+import { For, Show, createMemo, createSignal, onSettled } from "solid-js";
 import type { Cell, CellId, CellKind } from "../model/types";
 import type { CellRunStatus } from "../runtime/registry";
 import CodeEditor from "./CodeEditor";
@@ -37,12 +38,16 @@ interface RuntimeOutputProps {
 interface SourceEditorProps {
   readonly cell: Cell;
   readonly controller: NotebookController;
+  readonly onCreateAfter: () => void;
 }
 
-const KIND_LABEL: Record<Exclude<CellKind, "text">, string> = {
+const KIND_LABEL: Record<CellKind, string> = {
+  text: "prose",
   javascript: "js",
   markdown: "md",
 };
+
+const CELL_KINDS: readonly CellKind[] = ["text", "javascript", "markdown"];
 
 function RenameInput(props: RenameInputProps) {
   let cancelled = false;
@@ -130,6 +135,7 @@ function ProseSource(props: SourceEditorProps) {
           props.controller.updateCellSource(props.cell.id, source)
         }
         onRun={() => props.controller.runCell(props.cell.id)}
+        onCreateAfter={props.onCreateAfter}
       />
     </div>
   );
@@ -150,6 +156,7 @@ function ExecutableSource(props: SourceEditorProps) {
           props.controller.updateCellSource(props.cell.id, source)
         }
         onRun={() => props.controller.runCell(props.cell.id)}
+        onCreateAfter={props.onCreateAfter}
         diagnostics={diagnostics()}
         onComplete={(position) =>
           props.controller.completionsFor(props.cell.id, position)
@@ -170,6 +177,14 @@ function Chevron() {
   );
 }
 
+function PlusIcon() {
+  return (
+    <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
+      <path d="M6 1.5v9M1.5 6h9" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+    </svg>
+  );
+}
+
 function PinIcon() {
   return (
     <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
@@ -185,10 +200,71 @@ function PinIcon() {
   );
 }
 
-function focusEditor(treeItem: HTMLElement): void {
-  treeItem
-    .querySelector<HTMLElement>(":scope > [data-cell-main] .cm-content")
-    ?.focus();
+function focusEditor(treeItem: Element): EditorView | null {
+  const content = treeItem.querySelector<HTMLElement>(
+    ":scope > [data-cell-main] .cm-content",
+  );
+  content?.focus();
+  return content ? EditorView.findFromDOM(content) : null;
+}
+
+function focusNewCellEditor(cellId: CellId): void {
+  requestAnimationFrame(() => {
+    const treeItem = document.querySelector(`[data-cell-id="${CSS.escape(cellId)}"]`);
+    const view = treeItem && focusEditor(treeItem);
+    if (!view) return;
+    const doc = view.state.doc;
+    let anchor = doc.length;
+    for (let number = 1; number <= doc.lines; number += 1) {
+      const line = doc.line(number);
+      if (line.text.trim() === "") {
+        anchor = line.to;
+        break;
+      }
+    }
+    view.dispatch({ selection: { anchor } });
+  });
+}
+
+function KindChooser(props: { readonly onPick: (kind: CellKind) => void; readonly onClose: () => void }) {
+  return (
+    <span
+      class={styles.kindChooser}
+      role="group"
+      aria-label="New cell kind"
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          props.onClose();
+        }
+      }}
+      onFocusOut={(event) => {
+        const next = event.relatedTarget;
+        if (!(next instanceof Node) || !event.currentTarget.contains(next)) {
+          props.onClose();
+        }
+      }}
+    >
+      <For each={CELL_KINDS}>
+        {(kind, index) => (
+          <button
+            type="button"
+            class={styles.kindOption}
+            ref={(button) => {
+              if (index() === 0) onSettled(() => button.focus());
+            }}
+            onClick={(event) => {
+              event.stopPropagation();
+              props.onPick(kind);
+            }}
+          >
+            {KIND_LABEL[kind]}
+          </button>
+        )}
+      </For>
+    </span>
+  );
 }
 
 function CellNode(props: CellNodeProps) {
@@ -213,6 +289,16 @@ function CellNode(props: CellNodeProps) {
   const hasChildren = () => currentCell().children.length > 0;
   const showSource = () =>
     executable() && (selected() || props.view.isPinned(props.cellId));
+  const [choosingKind, setChoosingKind] = createSignal(false);
+
+  const createAfter = (kind: CellKind): void => {
+    setChoosingKind(false);
+    const placement = props.view.zoomRootId() === props.cellId ? "child" : "after";
+    const created = props.controller.createCell(props.cellId, kind, placement);
+    if (typeof created !== "string") return;
+    props.view.select(created);
+    focusNewCellEditor(created);
+  };
 
   const saveRename = (input: HTMLInputElement): void => {
     const error = props.controller.renameCell(props.cellId, input.value);
@@ -231,6 +317,11 @@ function CellNode(props: CellNodeProps) {
         event.preventDefault();
         treeItem.focus();
       }
+      return;
+    }
+    if (event.key === "Enter" && event.shiftKey) {
+      event.preventDefault();
+      createAfter(currentCell().kind);
       return;
     }
 
@@ -297,6 +388,7 @@ function CellNode(props: CellNodeProps) {
         role="treeitem"
         tabindex={selected() ? 0 : -1}
         class={styles.node}
+        data-cell-id={props.cellId}
         data-selected={selected() ? "" : undefined}
         aria-label={label()}
         aria-level={props.depth + 1}
@@ -384,30 +476,51 @@ function CellNode(props: CellNodeProps) {
                 />
               </Show>
               <Show when={executable()}>
-                <span class={styles.kind}>
-                  {KIND_LABEL[currentCell().kind as Exclude<CellKind, "text">]}
-                </span>
+                <span class={styles.kind}>{KIND_LABEL[currentCell().kind]}</span>
                 <Show when={preparation()?.type}>
                   <span class={styles.inlineType} title={preparation()?.type}>
                     {preparation()?.type}
                   </span>
                 </Show>
-                <button
-                  type="button"
-                  class={styles.pin}
-                  aria-pressed={props.view.isPinned(props.cellId) ? "true" : "false"}
-                  aria-label={`${
-                    props.view.isPinned(props.cellId) ? "Unpin" : "Pin"
-                  } source for ${label()}`}
-                  title="Keep source visible"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    props.view.togglePinned(props.cellId);
-                  }}
-                >
-                  <PinIcon />
-                </button>
               </Show>
+              <span class={styles.actions}>
+                <Show when={executable()}>
+                  <button
+                    type="button"
+                    class={styles.iconButton}
+                    aria-pressed={props.view.isPinned(props.cellId) ? "true" : "false"}
+                    aria-label={`${
+                      props.view.isPinned(props.cellId) ? "Unpin" : "Pin"
+                    } source for ${label()}`}
+                    title="Keep source visible"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      props.view.togglePinned(props.cellId);
+                    }}
+                  >
+                    <PinIcon />
+                  </button>
+                </Show>
+                <Show
+                  when={choosingKind()}
+                  fallback={
+                    <button
+                      type="button"
+                      class={styles.iconButton}
+                      aria-label={`Add cell after ${label()}`}
+                      title="Add cell (Shift+Enter)"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setChoosingKind(true);
+                      }}
+                    >
+                      <PlusIcon />
+                    </button>
+                  }
+                >
+                  <KindChooser onPick={createAfter} onClose={() => setChoosingKind(false)} />
+                </Show>
+              </span>
             </div>
 
             <Show when={props.view.renameError(props.cellId)}>
@@ -421,11 +534,19 @@ function CellNode(props: CellNodeProps) {
             </Show>
 
             <Show when={!executable()}>
-              <ProseSource cell={currentCell()} controller={props.controller} />
+              <ProseSource
+                cell={currentCell()}
+                controller={props.controller}
+                onCreateAfter={() => createAfter("text")}
+              />
             </Show>
 
             <Show when={showSource()}>
-              <ExecutableSource cell={currentCell()} controller={props.controller} />
+              <ExecutableSource
+                cell={currentCell()}
+                controller={props.controller}
+                onCreateAfter={() => createAfter(currentCell().kind)}
+              />
             </Show>
 
             <Show when={runtimeStatus() === "error" || runtimeStatus() === "cycle"}>

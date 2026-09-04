@@ -36,6 +36,7 @@ interface CodeEditorProps {
   readonly focused?: boolean;
   readonly onChange: (source: string) => void;
   readonly onRun: () => void;
+  readonly onCreateAfter?: () => void;
   readonly onBlur?: () => void;
   readonly diagnostics?: readonly SemanticDiagnostic[] | undefined;
   readonly onComplete?: (position: number) => Promise<SemanticCompletionResult>;
@@ -291,6 +292,10 @@ export default function CodeEditor(props: CodeEditorProps) {
       props.onRun();
       return true;
     };
+    const createCellAfter = () => {
+      props.onCreateAfter?.();
+      return true;
+    };
     const extensions: Extension[] = [
       history(),
       drawSelection(),
@@ -301,6 +306,7 @@ export default function CodeEditor(props: CodeEditorProps) {
       keymap.of([
         { key: "Mod-Enter", run: runCurrentCell },
         { key: "Ctrl-Enter", run: runCurrentCell },
+        { key: "Shift-Enter", run: createCellAfter },
         {
           key: "Escape",
           run(editor) {

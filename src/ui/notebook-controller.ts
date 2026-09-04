@@ -27,9 +27,10 @@ import type {
   SemanticQuickInfo,
 } from "../compiler/semantic-protocol";
 import { TINY_COMMERCE_NOTEBOOK } from "../demo/notebook";
-import { update } from "../model/commands";
+import { appendChild, insertSibling, update } from "../model/commands";
 import type {
   CellId,
+  CellKind,
   CommandError,
   NotebookDocument,
 } from "../model/types";
@@ -73,6 +74,11 @@ export interface NotebookController {
   runCell(cellId: CellId): void;
   updateCellSource(cellId: CellId, source: string): CommandError | undefined;
   renameCell(cellId: CellId, name: string): CommandError | undefined;
+  createCell(
+    referenceId: CellId,
+    kind: CellKind,
+    placement: "after" | "child",
+  ): CellId | CommandError;
   runtimeFor(cellId: CellId): CellRuntime | undefined;
   preparationFor(cellId: CellId): PreparedCell | undefined;
   semanticFor(cellId: CellId): CellSemanticDisplay;
@@ -87,6 +93,12 @@ export interface NotebookControllerOptions {
   readonly fastCoordinator?: FastPreparationCoordinator;
   readonly semanticCoordinator?: SemanticCoordinator;
 }
+
+const INITIAL_SOURCE: Record<CellKind, string> = {
+  text: "",
+  javascript: "$(() => {\n  \n})",
+  markdown: "md(() => `\n`)",
+};
 
 function errorMessage(error: unknown): string {
   try {
@@ -585,6 +597,7 @@ export function createNotebookController(
       setRuntimeEpoch((current) => current + 1);
       setCached(true);
       hydrated = true;
+      scheduleSemantic(snapshot, prepared);
     } catch {
       // IndexedDB and malformed records degrade to the normal execution path.
     } finally {
@@ -663,6 +676,25 @@ export function createNotebookController(
       invalidateSemantic(result.document, [cellId]);
       void runDocument(result.document);
       return undefined;
+    },
+    createCell(referenceId, kind, placement) {
+      const input = {
+        id: `cell-${crypto.randomUUID()}`,
+        kind,
+        source: INITIAL_SOURCE[kind],
+        classes: [],
+        metadata: {},
+      };
+      const result =
+        placement === "child"
+          ? appendChild(currentDocument, referenceId, input)
+          : insertSibling(currentDocument, referenceId, "after", input);
+      if (!result.ok) return result.error;
+
+      adoptDocument(result.document);
+      invalidateSemantic(result.document, [input.id]);
+      void runDocument(result.document, [input.id]);
+      return input.id;
     },
     runtimeFor(cellId) {
       runtimeEpoch();
