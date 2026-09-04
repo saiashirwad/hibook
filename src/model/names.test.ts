@@ -32,6 +32,7 @@ describe("cell names", () => {
       "name",
       "kind",
       "text",
+      "peek",
       "update",
       "append",
       "remove",

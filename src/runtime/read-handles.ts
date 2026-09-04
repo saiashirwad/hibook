@@ -7,6 +7,7 @@ export interface CellHandle {
   readonly kind: CellKind;
   readonly text: string;
   readonly value: unknown;
+  readonly peek: () => unknown;
   readonly children: Readonly<Record<string, CellHandle>>;
   readonly [name: string]: unknown;
 }
@@ -89,6 +90,7 @@ export function buildNotebookReadHandles(
       enumerable: true,
       get: () => registry.get(cellId)?.peek(),
     });
+    defineReadonlyValue(surface, "peek", () => registry.get(cellId)?.peek());
     defineReadonlyValue(surface, "children", namedChildren);
     Object.freeze(surface);
     return handle;

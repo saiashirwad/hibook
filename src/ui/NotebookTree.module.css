@@ -361,6 +361,25 @@
   line-height: 1.45;
 }
 
+.typePanel[data-semantic-status="pending"] {
+  border-left-color: var(--accent);
+}
+
+.typePanel[data-semantic-status="unavailable"] {
+  border-left-color: var(--danger);
+}
+
+.codeSource :global(.cm-semantic-hover) {
+  max-width: min(42rem, 80vw);
+  padding: 0.4rem 0.55rem;
+  color: var(--ink-strong);
+  background: var(--canvas-raised);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
 .typePanel p,
 .typePanel ul {
   margin: 0;

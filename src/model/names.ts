@@ -7,6 +7,7 @@ export const RESERVED_CELL_NAMES: Readonly<Record<string, true>> = {
   name: true,
   kind: true,
   text: true,
+  peek: true,
   update: true,
   append: true,
   remove: true,

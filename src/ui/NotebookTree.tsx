@@ -204,6 +204,15 @@ function ExecutableSource(props: SourceEditorProps) {
           props.controller.updateCellSource(props.cell.id, source)
         }
         onRun={() => props.controller.runCell(props.cell.id)}
+        diagnostics={
+          props.controller.semanticFor(props.cell.id).result?.diagnostics ?? []
+        }
+        onComplete={(position) =>
+          props.controller.completionsFor(props.cell.id, position)
+        }
+        onQuickInfo={(position) =>
+          props.controller.quickInfoFor(props.cell.id, position)
+        }
       />
     </div>
   );
@@ -252,6 +261,9 @@ function CellNode(props: CellNodeProps) {
   const runtime = createMemo(() => props.controller.runtimeFor(props.cellId));
   const preparation = createMemo(() =>
     props.controller.preparationFor(props.cellId),
+  );
+  const semantic = createMemo(() =>
+    props.controller.semanticFor(props.cellId),
   );
   const runtimeStatus = createMemo<CellRunStatus>(
     () => runtime()?.status() ?? "idle",
@@ -481,13 +493,31 @@ function CellNode(props: CellNodeProps) {
                 currentCell().kind,
               )}
             >
-              <div class={styles.typePanel}>
+              <div
+                class={styles.typePanel}
+                data-semantic-status={semantic().status}
+              >
                 <p>
-                  Fast provisional type: <code>{preparation()?.type ?? "pending"}</code>
+                  Type ({semantic().status}):{" "}
+                  <code>
+                    {semantic().result?.type ?? preparation()?.type ?? "pending"}
+                  </code>
                 </p>
-                <Show when={preparation()?.issues.length}>
+                <Show
+                  when={
+                    semantic().result?.diagnostics.length
+                      ? semantic().result?.diagnostics
+                      : preparation()?.issues
+                  }
+                >
                   <ul>
-                    <For each={preparation()?.issues ?? []}>
+                    <For
+                      each={
+                        semantic().result?.diagnostics.length
+                          ? semantic().result?.diagnostics
+                          : preparation()?.issues ?? []
+                      }
+                    >
                       {(issue) => <li>{issue.message}</li>}
                     </For>
                   </ul>

@@ -54,8 +54,10 @@ describe("notebook read handles", () => {
 
     ensureCellRuntime(registry, "products").publish(["lamp", "chair"]);
     expect(products?.value).toEqual(["lamp", "chair"]);
+    expect(products?.peek()).toEqual(["lamp", "chair"]);
     ensureCellRuntime(registry, "products").publish(["vase"]);
     expect(products?.value).toEqual(["vase"]);
+    expect(products?.peek()).toEqual(["vase"]);
   });
 
   it("freezes the public surface and exposes no document arrays or mutation API", () => {
@@ -80,6 +82,7 @@ describe("notebook read handles", () => {
       "kind",
       "text",
       "value",
+      "peek",
       "children",
     ]);
     expect(root).not.toHaveProperty("update");

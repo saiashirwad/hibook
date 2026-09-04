@@ -1,3 +1,5 @@
+import { autocompletion } from "@codemirror/autocomplete";
+import type { Completion } from "@codemirror/autocomplete";
 import { history, historyKeymap, defaultKeymap } from "@codemirror/commands";
 import {
   bracketMatching,
@@ -7,6 +9,8 @@ import {
 } from "@codemirror/language";
 import { javascript } from "@codemirror/lang-javascript";
 import { markdown } from "@codemirror/lang-markdown";
+import { setDiagnostics } from "@codemirror/lint";
+import type { Diagnostic } from "@codemirror/lint";
 import { EditorState, type Extension } from "@codemirror/state";
 import {
   EditorView,
@@ -14,11 +18,17 @@ import {
   highlightActiveLine,
   highlightActiveLineGutter,
   highlightSpecialChars,
+  hoverTooltip,
   keymap,
   lineNumbers,
 } from "@codemirror/view";
 import { createEffect, onSettled } from "solid-js";
 import type { CellKind } from "../model/types";
+import type {
+  SemanticCompletionResult,
+  SemanticDiagnostic,
+  SemanticQuickInfo,
+} from "../compiler/semantic-protocol";
 
 interface CodeEditorProps {
   readonly source: string;
@@ -28,6 +38,9 @@ interface CodeEditorProps {
   readonly onChange: (source: string) => void;
   readonly onRun: () => void;
   readonly onBlur?: () => void;
+  readonly diagnostics?: readonly SemanticDiagnostic[];
+  readonly onComplete?: (position: number) => Promise<SemanticCompletionResult>;
+  readonly onQuickInfo?: (position: number) => Promise<SemanticQuickInfo | undefined>;
 }
 
 const editorTheme = EditorView.theme({
@@ -65,6 +78,37 @@ const editorTheme = EditorView.theme({
   },
 });
 
+const COMPLETION_TYPE_BY_KIND: Readonly<Record<string, Completion["type"]>> = {
+  class: "class",
+  const: "constant",
+  enum: "enum",
+  function: "function",
+  interface: "interface",
+  keyword: "keyword",
+  let: "variable",
+  memberFunctionElement: "method",
+  memberGetAccessorElement: "property",
+  memberSetAccessorElement: "property",
+  memberVariableElement: "property",
+  method: "method",
+  module: "namespace",
+  property: "property",
+  type: "type",
+  var: "variable",
+};
+
+function codeMirrorDiagnostics(
+  diagnostics: readonly SemanticDiagnostic[],
+): readonly Diagnostic[] {
+  return diagnostics.map((diagnostic) => ({
+    from: diagnostic.from,
+    to: diagnostic.to,
+    severity: diagnostic.severity,
+    message: diagnostic.message,
+    source: "TypeScript",
+  }));
+}
+
 function languageFor(kind: CellKind): Extension {
   return kind === "text" ? markdown() : javascript({ typescript: true });
 }
@@ -94,6 +138,14 @@ export default function CodeEditor(props: CodeEditorProps) {
     () => props.focused ?? false,
     (focused) => {
       if (focused && view && !view.hasFocus) view.focus();
+    },
+  );
+
+  createEffect(
+    () => props.diagnostics ?? [],
+    (diagnostics) => {
+      if (!view) return;
+      view.dispatch(setDiagnostics(view.state, codeMirrorDiagnostics(diagnostics)));
     },
   );
 
@@ -148,11 +200,74 @@ export default function CodeEditor(props: CodeEditorProps) {
         highlightActiveLineGutter(),
       );
     }
+      if (props.onComplete) {
+        extensions.push(
+          autocompletion({
+            activateOnTyping: false,
+            override: [
+              async (context) => {
+                if (!context.explicit) return null;
+                try {
+                  const completion = await props.onComplete?.(context.pos);
+                  if (!completion || context.aborted) return null;
+                  return {
+                    from: completion.from,
+                    to: completion.to,
+                    options: completion.items.map((item) => {
+                      const type = COMPLETION_TYPE_BY_KIND[item.kind];
+                      return {
+                        label: item.label,
+                        ...(type === undefined ? {} : { type }),
+                        ...(item.detail ? { detail: item.detail } : {}),
+                        apply: item.applyText,
+                      };
+                    }),
+                  };
+                } catch {
+                  return null;
+                }
+              },
+            ],
+          }),
+        );
+      }
+      if (props.onQuickInfo) {
+        extensions.push(
+          hoverTooltip(
+            async (_editor, position) => {
+              try {
+                const quickInfo = await props.onQuickInfo?.(position);
+                if (!quickInfo) return null;
+                return {
+                  pos: quickInfo.from,
+                  end: quickInfo.to,
+                  above: true,
+                  create() {
+                    const dom = document.createElement("div");
+                    dom.className = "cm-semantic-hover";
+                    dom.textContent = quickInfo.text;
+                    return { dom };
+                  },
+                };
+              } catch {
+                return null;
+              }
+            },
+            { hideOnChange: true },
+          ),
+        );
+      }
 
     view = new EditorView({
       parent: host,
       state: EditorState.create({ doc: props.source, extensions }),
     });
+    view.dispatch(
+      setDiagnostics(
+        view.state,
+        codeMirrorDiagnostics(props.diagnostics ?? []),
+      ),
+    );
     if (props.focused) view.focus();
 
     return () => {
