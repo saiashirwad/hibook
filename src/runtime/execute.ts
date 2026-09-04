@@ -1,9 +1,7 @@
 import type { Cell, CellId, NotebookDocument } from "../model/types";
+import type { PreparedCell, PreparedNotebook } from "../compiler/protocol";
+import { revisionForDocument } from "../compiler/protocol";
 import type { NotebookGraphResult } from "./analysis-types";
-import {
-  buildNotebookDependencyGraph,
-  downstreamClosure,
-} from "./dependency-graph";
 import { buildNotebookReadHandles } from "./read-handles";
 import type { RuntimeContext } from "./read-handles";
 import type { CellRuntimeRegistry } from "./registry";
@@ -11,19 +9,33 @@ import {
   ensureCellRuntime,
   synchronizeRuntimeRegistry,
 } from "./registry";
-import type { CellPreparer, PreparedCell } from "./prepare";
-import { prepareCellSynchronously } from "./prepare";
 
 export const CALLBACK_REQUIRED_ERROR =
   "Cell must call $() or md() with a callback";
 export const ASYNC_RESULT_ERROR = "Async cell results are not supported yet";
 export const MARKDOWN_RESULT_ERROR = "md() callback must return a string";
+export const PREPARED_REVISION_MISMATCH_ERROR =
+  "Prepared notebook revision does not match the document";
 
-export interface NotebookExecutionOptions {
-  readonly prepared?: ReadonlyMap<CellId, PreparedCell>;
-  readonly prepare?: CellPreparer;
+export type NotebookPreparer = (
+  document: NotebookDocument,
+) => PreparedNotebook;
+
+interface NotebookExecutionOptionsBase {
   readonly changedIds?: Iterable<CellId>;
 }
+
+export type NotebookExecutionOptions = NotebookExecutionOptionsBase &
+  (
+    | {
+        readonly prepared: PreparedNotebook;
+        readonly prepare?: never;
+      }
+    | {
+        readonly prepared?: never;
+        readonly prepare: NotebookPreparer;
+      }
+  );
 
 export interface NotebookTransactionResult {
   readonly graph: NotebookGraphResult;
@@ -46,31 +58,73 @@ function isThenable(value: unknown): boolean {
   return typeof value.then === "function";
 }
 
-function preparationFor(
-  document: NotebookDocument,
-  cell: Cell,
-  graph: NotebookGraphResult,
-  options: NotebookExecutionOptions,
-): PreparedCell {
-  const supplied = options.prepared?.get(cell.id);
-  if (
-    supplied &&
-    supplied.cellId === cell.id &&
-    supplied.kind === cell.kind &&
-    supplied.source === cell.source
-  ) {
-    return supplied;
-  }
-
-  const analysis = graph.analyses.get(cell.id);
-  if (!analysis) {
-    throw new Error(`Missing dependency analysis for cell: ${cell.id}`);
-  }
-  return (options.prepare ?? prepareCellSynchronously)(
-    document,
-    cell,
-    analysis,
+function runtimeGraph(prepared: PreparedNotebook): NotebookGraphResult {
+  const analyses = new Map(
+    prepared.cells.map((cell) => [cell.cellId, cell.analysis] as const),
   );
+  const dependencies = new Map(
+    prepared.graph.order.map(
+      (cellId) => [cellId, prepared.graph.dependencies[cellId] ?? []] as const,
+    ),
+  );
+  const dependents = new Map(
+    prepared.graph.order.map(
+      (cellId) => [cellId, prepared.graph.dependents[cellId] ?? []] as const,
+    ),
+  );
+  return {
+    order: prepared.graph.order,
+    analyses,
+    dependencies,
+    dependents,
+    layers: prepared.graph.layers,
+    cycleGroups: prepared.graph.cycleGroups.map((cellIds) => ({ cellIds })),
+    cycleMembers: prepared.graph.cycleMembers,
+    blockedByCycles: prepared.graph.blockedByCycles,
+  };
+}
+
+function downstreamClosure(
+  graph: NotebookGraphResult,
+  changedIds: Iterable<CellId>,
+): readonly CellId[] {
+  const affected = new Set<CellId>();
+  const pending: CellId[] = [];
+  for (const cellId of changedIds) {
+    if (graph.dependents.has(cellId) && !affected.has(cellId)) {
+      affected.add(cellId);
+      pending.push(cellId);
+    }
+  }
+  for (let index = 0; index < pending.length; index += 1) {
+    const cellId = pending[index];
+    if (cellId === undefined) {
+      continue;
+    }
+    for (const dependentId of graph.dependents.get(cellId) ?? []) {
+      if (!affected.has(dependentId)) {
+        affected.add(dependentId);
+        pending.push(dependentId);
+      }
+    }
+  }
+  return graph.order.filter((cellId) => affected.has(cellId));
+}
+
+function preparationFor(
+  cell: Cell,
+  preparedCells: ReadonlyMap<CellId, PreparedCell>,
+): PreparedCell {
+  const prepared = preparedCells.get(cell.id);
+  if (
+    !prepared ||
+    prepared.cellId !== cell.id ||
+    prepared.kind !== cell.kind ||
+    prepared.source !== cell.source
+  ) {
+    throw new Error(`Missing exact prepared output for cell: ${cell.id}`);
+  }
+  return prepared;
 }
 
 function executePreparedCell(
@@ -123,10 +177,21 @@ function executePreparedCell(
 export function executeNotebookTransaction(
   document: NotebookDocument,
   registry: CellRuntimeRegistry,
-  options: NotebookExecutionOptions = {},
+  options: NotebookExecutionOptions,
 ): NotebookTransactionResult {
+  const prepared = options.prepared ?? options.prepare?.(document);
+  if (!prepared) {
+    throw new Error("Notebook execution requires prepared compiler output");
+  }
+  if (prepared.revision !== revisionForDocument(document)) {
+    throw new Error(PREPARED_REVISION_MISMATCH_ERROR);
+  }
+
   synchronizeRuntimeRegistry(registry, document);
-  const graph = buildNotebookDependencyGraph(document);
+  const graph = runtimeGraph(prepared);
+  const preparedCells = new Map(
+    prepared.cells.map((cell) => [cell.cellId, cell] as const),
+  );
   const affectedIds = Object.hasOwn(options, "changedIds")
     ? downstreamClosure(graph, options.changedIds ?? [])
     : graph.order;
@@ -164,14 +229,14 @@ export function executeNotebookTransaction(
       const runtime = ensureCellRuntime(registry, cellId);
       executedIds.push(cellId);
       try {
-        const prepared = preparationFor(document, cell, graph, options);
-        if (!prepared.ok) {
-          runtime.fail(prepared.error.message);
+        const preparedCell = preparationFor(cell, preparedCells);
+        if (!preparedCell.ok) {
+          runtime.fail(preparedCell.error.message);
           continue;
         }
         const value = executePreparedCell(
           cell,
-          prepared,
+          preparedCell,
           handles.contextFor(cellId),
         );
         runtime.publish(value);

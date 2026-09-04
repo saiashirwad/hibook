@@ -1,18 +1,19 @@
 import { describe, expect, it } from "vitest";
 import type { Cell, CellId, CellKind, NotebookDocument } from "../model/types";
-import { buildNotebookDependencyGraph } from "./dependency-graph";
+import type { PreparedNotebook } from "../compiler/protocol";
+import {
+  IMPORTS_UNSUPPORTED_ERROR,
+  INVALID_TYPESCRIPT_ERROR,
+  TOP_LEVEL_AWAIT_UNSUPPORTED_ERROR,
+  prepareExecution,
+} from "../compiler/fast-prepare";
 import {
   ASYNC_RESULT_ERROR,
   CALLBACK_REQUIRED_ERROR,
   MARKDOWN_RESULT_ERROR,
   executeNotebookTransaction,
 } from "./execute";
-import type { CellPreparer, PreparedCell } from "./prepare";
-import {
-  IMPORTS_UNSUPPORTED_ERROR,
-  INVALID_TYPESCRIPT_ERROR,
-  TOP_LEVEL_AWAIT_UNSUPPORTED_ERROR,
-} from "./prepare";
+import type { CellRuntimeRegistry } from "./registry";
 import { createRuntimeRegistry } from "./registry";
 
 function cell(
@@ -44,6 +45,17 @@ function flatDocument(cells: readonly Cell[]): NotebookDocument {
     rootId: root.id,
     cells: Object.fromEntries([root, ...cells].map((entry) => [entry.id, entry])),
   };
+}
+
+function execute(
+  document: NotebookDocument,
+  registry: CellRuntimeRegistry,
+  changedIds?: Iterable<CellId>,
+) {
+  const prepared = prepareExecution(document);
+  return changedIds
+    ? executeNotebookTransaction(document, registry, { prepared, changedIds })
+    : executeNotebookTransaction(document, registry, { prepared });
 }
 
 describe("notebook transactions", () => {
@@ -114,7 +126,7 @@ describe("notebook transactions", () => {
     const serialized = JSON.stringify(document);
     const registry = createRuntimeRegistry();
 
-    const first = executeNotebookTransaction(document, registry);
+    const first = execute(document, registry);
     expect(first.executedIds).toEqual([
       "products",
       "regions",
@@ -146,9 +158,7 @@ describe("notebook transactions", () => {
       ...document,
       cells: { ...document.cells, products: updatedProducts },
     };
-    const second = executeNotebookTransaction(updated, registry, {
-      changedIds: ["products"],
-    });
+    const second = execute(updated, registry, ["products"]);
 
     expect(second.affectedIds).toEqual([
       "products",
@@ -184,7 +194,7 @@ describe("notebook transactions", () => {
     ]);
     const registry = createRuntimeRegistry();
 
-    executeNotebookTransaction(document, registry);
+    execute(document, registry);
 
     expect(registry.get("upstream")?.peek()).toBe(4);
     expect(registry.get("downstream")?.peek()).toBe(7);
@@ -211,7 +221,7 @@ describe("notebook transactions", () => {
     ]);
     const registry = createRuntimeRegistry();
 
-    executeNotebookTransaction(document, registry);
+    execute(document, registry);
 
     expect(registry.get("syntax")?.error()).toBe(INVALID_TYPESCRIPT_ERROR);
     expect(registry.get("imported")?.error()).toBe(IMPORTS_UNSUPPORTED_ERROR);
@@ -231,7 +241,7 @@ describe("notebook transactions", () => {
     ]);
     const registry = createRuntimeRegistry();
 
-    executeNotebookTransaction(document, registry);
+    execute(document, registry);
 
     for (const cellId of [
       "missing",
@@ -256,7 +266,7 @@ describe("notebook transactions", () => {
     ]);
     const registry = createRuntimeRegistry();
 
-    executeNotebookTransaction(document, registry);
+    execute(document, registry);
 
     expect(registry.get("promise")?.error()).toBe(ASYNC_RESULT_ERROR);
     expect(registry.get("thenable")?.error()).toBe(ASYNC_RESULT_ERROR);
@@ -274,7 +284,7 @@ describe("notebook transactions", () => {
     ]);
     const registry = createRuntimeRegistry();
 
-    executeNotebookTransaction(document, registry);
+    execute(document, registry);
 
     expect(registry.get("title")?.peek()).toBe("Commerce");
     expect(registry.get("markdown")?.peek()).toBe("# Commerce");
@@ -294,7 +304,7 @@ describe("notebook transactions", () => {
     ]);
     const registry = createRuntimeRegistry();
 
-    const result = executeNotebookTransaction(document, registry);
+    const result = execute(document, registry);
 
     expect(result.graph.cycleGroups).toEqual([
       { cellIds: ["a", "b"] },
@@ -309,41 +319,33 @@ describe("notebook transactions", () => {
     expect(registry.get("independent")?.peek()).toBe(5);
   });
 
-  it("accepts prepared code or a synchronous preparer without changing executor semantics", () => {
+  it("consumes prepared output or an explicitly injected notebook preparer", () => {
     const preparedDocument = flatDocument([
       cell("prepared", "javascript", "$<number>(() => 1)"),
     ]);
-    const analysis = buildNotebookDependencyGraph(preparedDocument).analyses.get(
-      "prepared",
-    );
-    if (!analysis) {
-      throw new Error("Expected prepared cell analysis");
-    }
-    const prepared: PreparedCell = {
-      ok: true,
-      cellId: "prepared",
-      kind: "javascript",
-      source: "$<number>(() => 1)",
-      analysis,
-      code: "$(() => 7);",
+    const baseline = prepareExecution(preparedDocument);
+    const prepared: PreparedNotebook = {
+      ...baseline,
+      cells: baseline.cells.map((entry) =>
+        entry.cellId === "prepared" && entry.ok
+          ? { ...entry, code: "$(() => 7);" }
+          : entry,
+      ),
     };
     const preparedRegistry = createRuntimeRegistry();
-    executeNotebookTransaction(preparedDocument, preparedRegistry, {
-      prepared: new Map([["prepared", prepared]]),
-    });
+    executeNotebookTransaction(preparedDocument, preparedRegistry, { prepared });
     expect(preparedRegistry.get("prepared")?.peek()).toBe(7);
 
-    const prepare: CellPreparer = (_document, sourceCell, sourceAnalysis) => ({
-      ok: true,
-      cellId: sourceCell.id,
-      kind: sourceCell.kind,
-      source: sourceCell.source,
-      analysis: sourceAnalysis,
-      code: "$(() => 11);",
-    });
     const preparedByFunctionRegistry = createRuntimeRegistry();
     executeNotebookTransaction(preparedDocument, preparedByFunctionRegistry, {
-      prepare,
+      prepare: () => ({
+        ...prepared,
+        cells: prepared.cells.map((entry) =>
+          entry.cellId === "prepared" && entry.ok
+            ? { ...entry, code: "$(() => 11);" }
+            : entry,
+        ),
+      }),
     });
     expect(preparedByFunctionRegistry.get("prepared")?.peek()).toBe(11);
   });
@@ -359,7 +361,7 @@ describe("notebook transactions", () => {
     ]);
     const registry = createRuntimeRegistry();
 
-    executeNotebookTransaction(document, registry);
+    execute(document, registry);
 
     expect(registry.get("realm")?.peek()).toBe(true);
     expect(registry.get("functionValue")?.peek()).toBe(Math.max);

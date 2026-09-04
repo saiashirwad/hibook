@@ -2,7 +2,7 @@
 
 ## Current state
 
-Commits 1–4 are complete. The project now includes headless runtime modules for owned Solid signal entries, readonly notebook handles, synchronous TypeScript preparation, and dependency-ordered transactions. Commit 5's compiler worker/coordinator is next. No sample notebook, cache, Markdown rendering pipeline, persistence, or model-to-UI integration exists yet.
+Commits 1–5 are complete. The project now has a structured-clone-safe fast compiler protocol, pure preparation core, dedicated worker entry, lazy revision-guarded coordinator, and an executor that consumes prepared output without pulling TypeScript into its static dependency path. Commit 6's deterministic reactive outliner is next. No semantic worker, virtual TypeScript project, persistent compiler cache, sample notebook, Markdown rendering pipeline, persistence, or model-to-UI integration exists yet.
 
 ## Architecture decisions
 
@@ -34,8 +34,9 @@ Commits 1–4 are complete. The project now includes headless runtime modules fo
 
 - `src/runtime/registry.ts` owns live per-cell state in a regular `Map<CellId, CellRuntime>`. Each entry owns boxed Solid signal values plus synchronous imperative peek state; successful, failed, and cycle resolutions advance a monotonic version. Registry synchronization publishes text source and explicitly disposes entries removed from the serialized document.
 - `src/runtime/read-handles.ts` derives frozen readonly handles from normalized structure. Direct named children and the explicit `children` form share handle identities, while `value` reads the current registry value. Runtime handles expose no structural mutation API and are never stored in `NotebookDocument`.
-- `src/runtime/prepare.ts` is a temporary synchronous TypeScript 5.9 preparation boundary for the headless executor. It preserves source and dependency analysis, strips TypeScript syntax, and rejects syntax errors, imports, top-level await, module-only exports, and `import.meta`. Unsupported module syntax receives a stable preparation error before code can reach `Function`. Commit 5 can provide prepared cells without changing transaction semantics.
-- `src/runtime/execute.ts` uses the existing graph layers and downstream closure, publishes every synchronous result before dependent execution, retains unaffected values, isolates ordinary cell failures, and reports cycle members and their blocked dependents per cell. JavaScript and Markdown callback results must be synchronous; Markdown results must be strings.
+- `src/compiler/fast-prepare.ts` owns syntax validation and transpilation for execution. Its worker-local cache reuses output only for byte-identical cell ID, kind, and source while every document revision rebuilds dependency/path meaning. Fast output carries provisional `string`, explicit annotation, `unknown`, invalid, and cycle type/status data plus serialized graph data and measured preparation counters.
+- `src/compiler/fast-worker.ts` is the dedicated worker boundary. `src/compiler/coordinator.ts` constructs it only on the first uncached request, coalesces exact in-flight revisions, retains completed exact revisions in memory, rejects mismatched responses, prevents stale responses from becoming current, and provides the 120 ms replaceable/cancellable execution scheduler. Semantic tooling and IndexedDB caching remain deferred to commits 8 and 9.
+- `src/runtime/execute.ts` consumes an exact `PreparedNotebook` or an explicitly injected notebook preparer. It has no synchronous TypeScript preparation fallback and no static dependency on TypeScript or the dependency analyzer; worker preparation does not alter transaction ordering, errors, or the intentionally unsandboxed `Function` execution boundary.
 - Notebook programs currently execute with `Function` in the page realm. This is intentionally unsandboxed and suitable only for trusted notebook code; preparation in a worker will not make execution a security boundary.
 
 ## Package decisions
@@ -107,6 +108,16 @@ Final Commit 4 validation on 2026-09-04:
 - Module-only exports and `import.meta` receive stable preparation rejection before the unsandboxed `Function` boundary.
 - No visible UI or browser surface changed, so no visual browser check was required.
 
+Final Commit 5 validation on 2026-09-04:
+
+- `npm test -- --run` passed 11 files and 62 tests.
+- `npm run typecheck`, `npm run lint`, and `npm run build` passed.
+- The offline production audit found 0 vulnerabilities.
+- An agent-browser Chromium dev-worker smoke observed `workerConstructed=false` and `workerConstructionCount=0` before the first request. Two concurrent exact `prepareFast` calls returned the same Promise; after completion the coordinator reported `workerConstructionCount=1` and `pendingCount=0`.
+- The prepared revision exactly matched `JSON.stringify(document)`, and Vite served the real worker request at `/src/compiler/fast-worker.ts?worker_file&type=module`.
+- The smoke executed an `input` → `answer` transaction and published `42`. There were no page errors; the console contained only Vite debug messages.
+- Commit 5 changed no visible UI surface.
+
 ## Performance measurements
 
 Record measured values here with device, browser, build mode, fixture/revision, and date. Blank results mean no measurement has been taken.
@@ -118,4 +129,5 @@ Record measured values here with device, browser, build mode, fixture/revision, 
 | Uncached edit to semantic diagnostics |  |  |  |
 | Exact-revision cached reopen to output |  |  |  |
 | Exact-revision cached worker constructions |  |  |  |
+| Fast preparation, uncached three-cell fixture | This workstation, agent-browser Chromium, Vite dev mode | 11.5 ms total; 2.5 ms analysis; 8.9 ms transpile; 2 cells transpiled; 0 reused. Small development fixture, not a cold production target. | 2026-09-04 |
 | Large-notebook interaction |  |  |  |
