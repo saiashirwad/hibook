@@ -1,11 +1,11 @@
 # HiBook roadmap
 
-Status: commit 1 is completed; commit 2 is pending.
+Status: commits 1–2 are completed; commit 3 is pending.
 
 1. **Completed — `chore: establish application and quality baseline`**  
    Vite, Solid, tooling, durable notes, semantic theme tokens, and the honest full-page shell.
-2. **Pending — `model: add normalized notebook commands`**  
-   Types, validation, atomic structural commands, and sibling-scoped naming.
+2. **Completed — `model: add normalized notebook commands`**  
+   Serializable types, whole-document diagnostics, pure structural commands, sibling-scoped naming, and focused tests.
 3. **Pending — `runtime: resolve notebook paths and dependencies`**  
    Direct and `.children` paths, graph layers, cycles, and downstream closure.
 4. **Pending — `runtime: execute reactive notebook transactions`**  
@@ -25,7 +25,7 @@ Status: commit 1 is completed; commit 2 is pending.
 
 ## Demo boundary
 
-The planned demo is a deterministic Tiny Commerce notebook that demonstrates the normalized outline, reactive synchronous execution, safe Markdown, notebook-aware TypeScript tooling, and exact-revision hydration. The current commit provides only the application and quality baseline; it does not simulate notebook behavior.
+The planned demo is a deterministic Tiny Commerce notebook that demonstrates the normalized outline, reactive synchronous execution, safe Markdown, notebook-aware TypeScript tooling, and exact-revision hydration. The current work adds the standalone persisted model and command layer; it does not yet connect notebook behavior to the application.
 
 ## Deferred beyond the demo
 
