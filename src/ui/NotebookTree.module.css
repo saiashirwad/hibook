@@ -39,6 +39,7 @@
   padding: 0.2rem 0.3rem;
   border-radius: var(--radius-sm);
   font-size: 0.78rem;
+  min-height: 1.5rem;
 }
 
 .breadcrumbButton[aria-current="location"] {
@@ -60,6 +61,7 @@
   margin: 0;
   padding: 0;
   list-style: none;
+  outline: none;
 }
 
 .main {
@@ -74,26 +76,27 @@
 
 .node > .main:hover,
 .selected > .main,
-.node > .main:focus-visible {
+.node:focus-visible > .main {
   background: var(--selection);
 }
 
-.node > .main:focus-visible {
-  box-shadow: 0 0 0 2px var(--accent);
+.node:focus-visible > .main {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .cellHeading {
   display: grid;
   min-width: 0;
-  grid-template-columns: 1.2rem minmax(0, 1fr) auto;
+  grid-template-columns: 1.5rem minmax(0, 1fr) auto;
   align-items: center;
   gap: 0.25rem;
 }
 
 .collapseButton {
   display: inline-grid;
-  width: 1.2rem;
-  height: 1.2rem;
+  width: 1.5rem;
+  height: 1.5rem;
   place-items: center;
   padding: 0;
   border-radius: var(--radius-sm);
@@ -177,7 +180,8 @@
 }
 
 .node > .main:hover > .cellHeading > .actions,
-.node > .main:focus-within > .cellHeading > .actions {
+.node > .main:focus-within > .cellHeading > .actions,
+.node:focus-visible > .main > .cellHeading > .actions {
   opacity: 1;
   pointer-events: auto;
 }
@@ -185,6 +189,7 @@
 .disclosureButton,
 .actionButton {
   padding: 0.24rem 0.34rem;
+  min-height: 1.5rem;
   border-radius: var(--radius-sm);
   font-size: 0.66rem;
   font-weight: 650;
@@ -216,10 +221,12 @@
   background: var(--canvas-raised);
   font-family: var(--font-mono);
   font-size: 0.82rem;
+  min-height: 1.5rem;
 }
 
 .renameButton {
   padding: 0.2rem 0.32rem;
+  min-height: 1.5rem;
   border: 0;
   border-radius: var(--radius-sm);
   color: var(--ink-muted);
@@ -413,33 +420,68 @@
   min-width: 0;
   margin: 0 0 0 clamp(0.65rem, 2vw, 1.25rem);
   padding: 0 0 0 clamp(0.25rem, 0.8vw, 0.55rem);
-  border-left: 1px solid var(--line);
+  border-left: 1px solid var(--ink-faint);
   list-style: none;
 }
 
 .breadcrumbButton:hover,
-.breadcrumbButton:focus-visible,
 .collapseButton:hover,
-.collapseButton:focus-visible,
 .disclosureButton:hover,
-.disclosureButton:focus-visible,
 .actionButton:hover,
+.renameButton:hover {
+  color: var(--accent);
+}
+
+.breadcrumbButton:focus-visible,
+.collapseButton:focus-visible,
+.disclosureButton:focus-visible,
 .actionButton:focus-visible,
-.renameButton:hover,
 .renameButton:focus-visible {
   color: var(--accent);
   outline: 2px solid var(--accent);
-  outline-offset: 1px;
+  outline-offset: 2px;
 }
 
 @media (hover: none), (max-width: 44rem) {
+  .breadcrumbs {
+    align-items: stretch;
+    flex-wrap: wrap;
+    overflow-x: visible;
+    white-space: normal;
+  }
+
+  .breadcrumbItem {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .breadcrumbButton,
+  .collapseButton,
+  .disclosureButton,
+  .actionButton,
+  .renameButton {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+  }
+
+  .breadcrumbButton {
+    overflow-wrap: anywhere;
+    text-align: left;
+    max-width: 100%;
+  }
+
+  .main {
+    padding-inline: 0.2rem;
+  }
+
   .cellHeading {
-    grid-template-columns: 1.2rem minmax(0, 1fr);
+    grid-template-columns: 2.75rem minmax(0, 1fr);
   }
 
   .actions {
     grid-column: 2;
     justify-content: flex-start;
+    gap: 0.2rem;
     opacity: 1;
     pointer-events: auto;
   }
@@ -448,15 +490,27 @@
     max-width: 65vw;
   }
 
-  .proseSource,
+  .renameInput {
+    flex: 1 1 8rem;
+    max-width: 100%;
+    min-height: 2.75rem;
+  }
+
+  .proseHost,
   .codeSource,
   .valueOutput,
   .markdownOutput,
+  .cachedNotice,
   .pendingOutput,
   .typePanel,
   .inlineError,
   .runtimeError {
-    margin-left: 1.2rem;
+    margin-left: 0.75rem;
+  }
+
+  .children {
+    margin-left: 0.3rem;
+    padding-left: 0.2rem;
   }
 }
 

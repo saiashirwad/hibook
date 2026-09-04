@@ -304,35 +304,116 @@ function CellNode(props: CellNodeProps) {
     }
     return true;
   };
+  const handleTreeKeyDown = (event: KeyboardEvent): void => {
+    const treeItem = event.currentTarget;
+    if (!(treeItem instanceof HTMLElement) || event.target !== treeItem) return;
+
+    let destination: HTMLElement | null = null;
+    let handled = false;
+
+    if (
+      event.key === "ArrowUp" ||
+      event.key === "ArrowDown" ||
+      event.key === "Home" ||
+      event.key === "End"
+    ) {
+      const tree = treeItem.closest<HTMLElement>('[role="tree"]');
+      const visibleItems =
+        tree?.querySelectorAll<HTMLElement>('[role="treeitem"]');
+      if (!visibleItems || visibleItems.length === 0) return;
+      handled = true;
+
+      if (event.key === "Home") {
+        destination = visibleItems.item(0);
+      } else if (event.key === "End") {
+        destination = visibleItems.item(visibleItems.length - 1);
+      } else {
+        let currentIndex = -1;
+        for (let index = 0; index < visibleItems.length; index += 1) {
+          if (visibleItems.item(index) === treeItem) {
+            currentIndex = index;
+            break;
+          }
+        }
+
+        const nextIndex =
+          event.key === "ArrowUp" ? currentIndex - 1 : currentIndex + 1;
+        if (
+          currentIndex >= 0 &&
+          nextIndex >= 0 &&
+          nextIndex < visibleItems.length
+        ) {
+          destination = visibleItems.item(nextIndex);
+        }
+      }
+    } else if (event.key === "ArrowRight") {
+      if (currentCell().children.length === 0) return;
+      if (props.view.isCollapsed(props.cellId)) {
+        props.view.toggleCollapsed(props.cellId);
+        handled = true;
+      } else {
+        destination = treeItem.querySelector<HTMLElement>(
+          ':scope > [role="group"] > [role="treeitem"]',
+        );
+      }
+    } else if (event.key === "ArrowLeft") {
+      if (
+        currentCell().children.length > 0 &&
+        !props.view.isCollapsed(props.cellId)
+      ) {
+        props.view.toggleCollapsed(props.cellId);
+        handled = true;
+      } else {
+        destination =
+          treeItem.parentElement?.closest<HTMLElement>('[role="treeitem"]') ??
+          null;
+      }
+    }
+
+    if (destination) {
+      destination.focus();
+      handled = true;
+    }
+    if (handled) event.preventDefault();
+  };
 
   return (
     <Show when={cell()}>
       <li
-          role="none"
-          class={
-            props.view.selectedId() === props.cellId
-              ? `${styles.node} ${styles.selected}`
-              : styles.node
+        role="treeitem"
+        tabindex={props.view.selectedId() === props.cellId ? 0 : -1}
+        class={
+          props.view.selectedId() === props.cellId
+            ? `${styles.node} ${styles.selected}`
+            : styles.node
+        }
+        aria-label={currentCell().name ?? currentCell().id}
+        aria-level={props.depth + 1}
+        aria-selected={
+          props.view.selectedId() === props.cellId ? "true" : "false"
+        }
+        aria-expanded={
+          currentCell().children.length === 0
+            ? undefined
+            : props.view.isCollapsed(props.cellId)
+              ? "false"
+              : "true"
+        }
+        onFocus={(event) => {
+          const target = event.target;
+          if (
+            target instanceof Element &&
+            target.closest('[role="treeitem"]') === event.currentTarget
+          ) {
+            props.view.select(props.cellId);
           }
+        }}
+        onKeyDown={handleTreeKeyDown}
+      >
+        <div
+          class={styles.main}
+          onClick={() => props.view.select(props.cellId)}
         >
-          <div
-            role="treeitem"
-            tabindex="0"
-            class={styles.main}
-            aria-level={props.depth + 1}
-            aria-selected={
-              props.view.selectedId() === props.cellId ? "true" : "false"
-            }
-            aria-expanded={
-              currentCell().children.length === 0
-                ? false
-                : props.view.isCollapsed(props.cellId)
-                  ? "false"
-                  : "true"
-            }
-            onFocus={() => props.view.select(props.cellId)}
-            onClick={() => props.view.select(props.cellId)}
-          >
             <div class={styles.cellHeading}>
               <Show
                 when={currentCell().children.length > 0}
@@ -346,6 +427,7 @@ function CellNode(props: CellNodeProps) {
                   } ${currentCell().name ?? currentCell().id}`}
                   onClick={(event) => {
                     event.stopPropagation();
+                    props.view.select(props.cellId);
                     props.view.toggleCollapsed(props.cellId);
                   }}
                 >

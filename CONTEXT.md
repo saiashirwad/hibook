@@ -2,7 +2,7 @@
 
 ## Current state
 
-Commits 1–9 are complete. The app uses a deterministic Tiny Commerce notebook as a full-width recursive outliner, with one lazy fast worker for preparation, normalized model commands for document and source changes, direct CodeMirror editing, sanitized rendered Markdown, and bounded exact-revision compiler/output hydration. A separate lazy semantic worker owns the notebook-wide TypeScript project and editor tooling. Notebook documents remain intentionally unpersisted.
+Commits 1–10 are complete. The app uses a deterministic Tiny Commerce notebook as a full-width recursive outliner, with one lazy fast worker for preparation, normalized model commands for document and source changes, direct CodeMirror editing, sanitized rendered Markdown, bounded exact-revision compiler/output hydration, and browser-verified responsive and accessible polish. A separate lazy semantic worker owns the notebook-wide TypeScript project and editor tooling. Notebook documents remain intentionally unpersisted.
 
 ## Architecture decisions
 
@@ -54,6 +54,8 @@ Commits 1–9 are complete. The app uses a deterministic Tiny Commerce notebook 
 - `CodeEditor` owns direct CodeMirror `EditorView` construction and destruction in `onSettled`; reactive source synchronization dispatches only when editor and model text differ, so model updates do not reset the cursor in an echo loop. Executable cells add an explicit-only asynchronous completion source, source-relative diagnostics through CodeMirror lint state, and demand-started hover quick info. Focusing an editor does not request semantic tooling, and text cells remain Markdown-only editors.
 - Prose preview and editor layers remain mounted in the same CSS grid area. The inactive layer uses only `visibility` and `pointer-events`, so both layers continue contributing to one stable host height while preview/edit state changes.
 - `renderMarkdown` is the sole HTML-producing Markdown path: marked parses source and DOMPurify sanitizes the result before either prose preview or executable Markdown output assigns `innerHTML`. JavaScript values continue through the structured defensive formatter, and runtime errors remain text.
+- Tree nodes are `li[role="treeitem"]` elements with one selected, ID-keyed roving `tabindex="0"`; every other visible item uses `-1`. Up/Down/Home/End follow visible DOM order, Right expands or enters a branch, and Left collapses or moves to the visible parent. Navigation ignores events from nested controls and editors, and leaves omit `aria-expanded`.
+- Focus and action visibility selectors remain scoped to the direct row, so focus or hover in descendant treeitems cannot reveal ancestor actions. Muted and faint palette tokens remain visually distinct while meeting WCAG AA on canvas, selected, and subtle surfaces. Compact desktop controls are at least 24 px high; narrow and touch controls are at least 44 px high and remain visible and pointer-active.
 
 ## Package decisions
 
@@ -190,18 +192,31 @@ Final Commit 9 validation on 2026-09-04:
 - Browser errors were empty, the console contained only Vite debug messages, and the visual screenshot confirmed clear cached/stale labels.
 - Review corrections preserved cached values during semantic-only refreshes, accepted complete rejected prepared cells, retained unaffected cached branches during targeted runs, and fixed strict local narrowing and hydration cleanup control flow.
 
+Final Commit 10 validation on 2026-09-04:
+
+- `npm test -- --run` passed 18 files and 92 tests; `npm run typecheck`, `npm run lint`, and `npm run build` passed. The offline production audit found 0 vulnerabilities.
+- The final production build emitted the fast worker at 3,469.12 kB, the semantic worker at 6,625.81 kB, main JavaScript at 734.73 kB (252.65 kB gzip), CSS at 11.49 kB (2.93 kB gzip), and `index.html` at 0.50 kB (0.31 kB gzip).
+- Agent-browser Chromium exposed one tree tab stop, omitted `aria-expanded` on leaves, moved Down to data, moved Right to the first child, moved Left to the parent or collapsed the branch, and handled Home/End. Down at the final boundary did not scroll. ArrowLeft from the nested Collapse-data button left its branch expanded, confirming nested controls do not trigger tree navigation.
+- Focusing a row revealed only that row's actions. Root actions returned to `opacity: 0` and `pointer-events: none` while intro was focused. At 1440 px, viewport, document, body, main, and tree widths were all 1440 px; inactive regions remained transparent with zero border and shadow, and hovering root left products transparent.
+- At 390 px, viewport, document, body, main, and tree widths were all 390 px. Actions were visible and pointer-active, and action, collapse, breadcrumb, run, rename input, and Save controls measured 44 px high.
+- Prose host, preview, and editor heights matched exactly at 36.09375 px through static, edit, and post-edit desktop states, and at 82.71875 px in each mobile state.
+- Axe 4.12.1 scans for WCAG 2 A/AA, 2.1 AA, and 2.2 AA reported 0 violations and 21 passes at both widths. One incomplete result was limited to contrast automation being unable to assess five `aria-hidden` chevron glyphs.
+- The final exact cached reload retained the report and cached statuses and loaded zero workers. Browser `errors` was `[]`; the console contained only Vite debug and hot-module-reload messages. Desktop and mobile screenshots were visually clean.
+- Review and browser corrections kept the direct-row focus action selector, consumed boundary navigation keys without scrolling, made the narrow rename input 44 px high, and raised compact desktop action and collapse targets to 24 px.
+- A built `vite preview` smoke at 390 px reached Notebook ready with the report and both hashed workers on the first uncached run; viewport, document, body, main, and tree widths were all 390 px. An exact reload showed the cached report with zero worker resources, browser `errors` and console were both `[]`, and production axe repeated 0 violations and 21 passes with the same single chevron-only incomplete result. Vite's expected 500 kB chunk warning reflects local TypeScript and CodeMirror; lazy CodeMirror and a smaller transpiler remain deferred.
+
 ## Performance measurements
 
 Record measured values here with device, browser, build mode, fixture/revision, and date. Blank results mean no measurement has been taken.
 
 | Scenario | Environment | Result | Date |
 | --- | --- | --- | --- |
-| Initial structure and prose visible |  |  |  |
-| Uncached edit to first visible output |  |  |  |
-| Uncached edit to semantic diagnostics |  |  |  |
-| Exact-revision cached reopen to output | This workstation, agent-browser Chromium, Vite dev mode | Cached status and visible output at 50.4 ms. | 2026-09-04 |
+| Initial structure and prose visible | This workstation, agent-browser headless Chromium, Vite dev mode | On uncached Tiny Commerce, structure and prose were visible at 36.9 ms and `DOMContentLoaded` at 37.0 ms. Output appeared at 244.0 ms after the fast response at 235.5 ms; semantic worker construction was at 589.3 ms and its response at 847.2 ms, so output preceded semantic work. Page-realm `ScriptDuration` was 29.3 ms through semantic completion. Development timing, not a production target. | 2026-09-04 |
+| Uncached edit to first visible output | This workstation, agent-browser headless Chromium, Vite dev mode | Warm products edit measured from just before typing: fast request at 201.9 ms, response at 205.2 ms, report DOM update at 207.1 ms, next frame at 214.8 ms, and semantic response at 583.0 ms. Includes typing and the 120 ms/350 ms schedules. Development timing, not a production target. | 2026-09-04 |
+| Uncached edit to semantic diagnostics | This workstation, agent-browser headless Chromium, Vite dev mode | Invalid edit measured from just before typing: semantic response at 514.5 ms and CodeMirror error marker at 525.5 ms. Includes typing and the 120 ms/350 ms schedules. Development timing, not a production target. | 2026-09-04 |
+| Exact-revision cached reopen to output | This workstation, agent-browser headless Chromium, Vite dev mode | Latest exact reopen showed structure and prose at 52.3 ms and output at 64.0 ms, with zero worker events or resources. Across observed runs, cached visible output ranged from 50.4–64.0 ms. | 2026-09-04 |
 | Exact-revision cached worker constructions | This workstation, agent-browser Chromium, Vite dev mode | Zero worker resources and zero worker messages before tooling or execution demand. | 2026-09-04 |
 | Fast preparation, uncached three-cell fixture | This workstation, agent-browser Chromium, Vite dev mode | 11.5 ms total; 2.5 ms analysis; 8.9 ms transpile; 2 cells transpiled; 0 reused. Small development fixture, not a cold production target. | 2026-09-04 |
 | Tiny Commerce initial compiler trace | This workstation, agent-browser Chromium, Vite dev mode | Fast request at 48.0 ms and response at 206.8 ms; fast core 18.7 ms total (4.8 ms analysis, 13.8 ms transpile, 11 cells, 6 transpiled). Semantic request at 559.2 ms and response at 830.6 ms; semantic core 111.1 ms total (0.2 ms sync, 110.9 ms inference, 17 writes, 1 skip, 4 layers, 4 builds). Development timing, not a production target. | 2026-09-04 |
 | Warm Tiny Commerce products edit | This workstation, agent-browser Chromium, Vite dev mode | Fast core 2.6 ms total (1.3 ms analysis, 1.3 ms transpile, 5 reused, 1 transpiled). Semantic core 13.4 ms total (0.6 ms sync, 12.8 ms inference, 6 writes, 12 skips, 4 layers, 4 builds, 7 reused); the one-product report showed 55.20. Development timing, not a production target. | 2026-09-04 |
-| Large-notebook interaction |  |  |  |
+| Large-notebook interaction | This workstation, agent-browser headless Chromium, Vite dev mode | Throwaway 201-text-cell fixture mounted 201 CodeMirror editors; render returned at 467.4 ms and settled after two frames at 477.7 ms. Width remained 1440 px with no overflow. Development stress measurement, not a production target. | 2026-09-04 |

@@ -64,10 +64,10 @@
 }
 
 .runButton:disabled {
-  border-color: var(--line);
+  border-color: var(--ink-faint);
   color: var(--ink-faint);
   background: var(--surface-subtle);
-  cursor: wait;
+  cursor: not-allowed;
 }
 
 .runButton:focus-visible {
@@ -82,6 +82,23 @@
   color: var(--danger);
   background: var(--surface-subtle);
   font-size: 0.82rem;
+}
+
+@media (hover: none), (max-width: 44rem) {
+  .runGroup {
+    min-width: 0;
+    flex-wrap: wrap;
+  }
+
+  .runMessage {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .runButton {
+    min-height: 2.75rem;
+    padding-inline: 0.85rem;
+  }
 }
 
 @media (max-width: 34rem) {
