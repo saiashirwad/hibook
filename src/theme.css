@@ -9,6 +9,7 @@
   --accent: #4b55ad;
   --accent-soft: #e7e9ff;
   --danger: #b4233c;
+  --success: #26734d;
   --ink: #2c313a;
   --ink-strong: #15181e;
   --ink-muted: #606773;
@@ -47,6 +48,7 @@ body {
   min-width: 20rem;
   min-height: 100vh;
   margin: 0;
+  overflow-x: clip;
   background: var(--canvas);
 }
 

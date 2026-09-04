@@ -1,6 +1,6 @@
 # HiBook roadmap
 
-Status: commits 1–5 are completed; commit 6 is pending.
+Status: commits 1–6 are completed; commit 7 is pending.
 
 1. **Completed — `chore: establish application and quality baseline`**  
    Vite, Solid, tooling, durable notes, semantic theme tokens, and the honest full-page shell.
@@ -12,8 +12,8 @@ Status: commits 1–5 are completed; commit 6 is pending.
    Registry, readonly handles, synchronous preparation and execution, status, errors, and deterministic disposal.
 5. **Completed — `compiler: add fast preparation worker`**  
    Parsing, dependencies, syntax validation, transpilation, revision guards, coalescing, and reuse.
-6. **Pending — `ui: add deterministic reactive outliner`**  
-   Tiny Commerce data, nested tree, collapse, zoom, breadcrumbs, disclosures, and rename.
+6. **Completed — `ui: add deterministic reactive outliner`**  
+   Deterministic Tiny Commerce data, recursive tree, worker-backed execution, collapse, zoom, breadcrumbs, disclosures, and atomic inline rename.
 7. **Pending — `editor: integrate CodeMirror and safe Markdown`**  
    Direct CodeMirror integration, prose height parity, Mod+Enter, marked plus DOMPurify, and output formatting.
 8. **Pending — `compiler: add semantic inference and editor tooling`**  
@@ -25,7 +25,7 @@ Status: commits 1–5 are completed; commit 6 is pending.
 
 ## Demo boundary
 
-The planned demo is a deterministic Tiny Commerce notebook that demonstrates the normalized outline, reactive synchronous execution, safe Markdown, notebook-aware TypeScript tooling, and exact-revision hydration. Commit 5 establishes the fast worker preparation and revision-safe coordinator boundary; application UI integration remains pending.
+The planned demo is a deterministic Tiny Commerce notebook that demonstrates the normalized outline, reactive synchronous execution, safe Markdown, notebook-aware TypeScript tooling, and exact-revision hydration. Commit 6 completes the first worker-backed visible outliner; CodeMirror and sanitized rendered Markdown remain pending in Commit 7.
 
 ## Deferred beyond the demo
 

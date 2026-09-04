@@ -2,7 +2,7 @@
 
 ## Current state
 
-Commits 1–5 are complete. The project now has a structured-clone-safe fast compiler protocol, pure preparation core, dedicated worker entry, lazy revision-guarded coordinator, and an executor that consumes prepared output without pulling TypeScript into its static dependency path. Commit 6's deterministic reactive outliner is next. No semantic worker, virtual TypeScript project, persistent compiler cache, sample notebook, Markdown rendering pipeline, persistence, or model-to-UI integration exists yet.
+Commits 1–6 are complete. The app now opens a deterministic Tiny Commerce notebook as a full-width recursive outliner, prepares it through one lazy fast worker, executes six cells reactively, and exposes collapse, zoom, breadcrumbs, independent disclosures, runtime state, provisional types, and atomic inline rename. Markdown output remains escaped plain text until Commit 7. No semantic worker, virtual TypeScript project, persistent compiler cache, rendered Markdown pipeline, persistence, or editor integration exists yet.
 
 ## Architecture decisions
 
@@ -38,6 +38,14 @@ Commits 1–5 are complete. The project now has a structured-clone-safe fast com
 - `src/compiler/fast-worker.ts` is the dedicated worker boundary. `src/compiler/coordinator.ts` constructs it only on the first uncached request, coalesces exact in-flight revisions, retains completed exact revisions in memory, rejects mismatched responses, prevents stale responses from becoming current, and provides the 120 ms replaceable/cancellable execution scheduler. Semantic tooling and IndexedDB caching remain deferred to commits 8 and 9.
 - `src/runtime/execute.ts` consumes an exact `PreparedNotebook` or an explicitly injected notebook preparer. It has no synchronous TypeScript preparation fallback and no static dependency on TypeScript or the dependency analyzer; worker preparation does not alter transaction ordering, errors, or the intentionally unsandboxed `Function` execution boundary.
 - Notebook programs currently execute with `Function` in the page realm. This is intentionally unsandboxed and suitable only for trusted notebook code; preparation in a worker will not make execution a security boundary.
+
+## Reactive outliner decisions
+
+- `src/demo/notebook.ts` is the deterministic Tiny Commerce fixture. Every cell has an explicit stable ID and programmatic name; its sources exercise direct, explicit `.children`, and expected-parent paths, while a separate executable branch remains available for later compiler-reuse demonstrations.
+- The App-owned notebook controller keeps serialized document, prepared compiler output, and application errors in separate boxed signals. It owns one lazy fast-preparation coordinator and one runtime registry, pre-creates initial cell runtimes in component setup, starts synchronization, preparation, and execution from `onSettled`, rejects stale completion writes by run and revision, and disposes worker/runtime state with the component.
+- Rename remains a model `update` command and changes only the programmatic name. Successful structural name changes prepare the new exact revision and rerun the whole document so newly resolving or missing paths cannot be skipped; invalid changes stay atomic and expose the typed command message inline.
+- Collapse, selection, zoom, disclosures, and rename draft/error state are transient, ID-keyed UI state. Breadcrumbs are derived from normalized structure rather than persisted metadata.
+- Commit 6 renders Markdown callback output only as plain text and uses a deliberately small defensive JavaScript value formatter. CodeMirror, marked/DOMPurify rendering, semantic TypeScript, and persistent caching remain owned by later commits.
 
 ## Package decisions
 
@@ -117,6 +125,20 @@ Final Commit 5 validation on 2026-09-04:
 - The prepared revision exactly matched `JSON.stringify(document)`, and Vite served the real worker request at `/src/compiler/fast-worker.ts?worker_file&type=module`.
 - The smoke executed an `input` → `answer` transaction and published `42`. There were no page errors; the console contained only Vite debug messages.
 - Commit 5 changed no visible UI surface.
+
+Final Commit 6 validation on 2026-09-04:
+
+- `npm test -- --run` passed 13 files and 66 tests; `npm run typecheck`, `npm run lint`, and `npm run build` passed.
+- The offline production audit found 0 vulnerabilities.
+- The production build emitted the fast worker at 3,469.12 kB uncompressed, main JavaScript at 68.68 kB (24.89 kB gzip), CSS at 8.96 kB (2.49 kB gzip), and `index.html` at 0.50 kB (0.31 kB gzip).
+- A fresh agent-browser session made one worker request, reached `Notebook ready`, and showed all six executable cells succeeding. Products, regions, priced products, metrics, and the plain-text Markdown report published visible values.
+- Collapse worked, zooming to `analysis` produced the derived breadcrumb path, and the root breadcrumb returned to the full tree.
+- The reserved rename `value` remained in the editor with its inline alert. Renaming `metrics` to `metricsNew` reran the full notebook and surfaced the broken report path without rewriting report source; renaming back recovered success.
+- SRC, OUT, and TYPE toggled independently. The report source still contained `root.analysis.metrics.value`, and Run all advanced runtime versions.
+- At 1440 px wide, the tree and document scroll width were both 1440 px. An inactive node had transparent background, zero border, and no shadow; hidden actions had opacity 0 and `pointer-events: none`.
+- At 390 × 844, the tree, body, and document widths were 390 px with no horizontal overflow. Actions had opacity 1 and `pointer-events: auto`, and the report reached ready state.
+- Fresh-page errors were empty and the console contained only Vite connection debug messages.
+- Review fixes made structural rename a full rerun, added idle output pending text, emitted Solid-compatible ARIA strings, pre-created runtimes outside `onSettled`, and removed `<Show>` function-child reads that were untracked under Solid 2.
 
 ## Performance measurements
 

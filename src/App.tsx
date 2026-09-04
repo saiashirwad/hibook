@@ -1,16 +1,49 @@
+import { Show } from "solid-js";
+import { TINY_COMMERCE_IDS } from "./demo/notebook";
 import styles from "./App.module.css";
+import NotebookTree from "./ui/NotebookTree";
+import { createNotebookController } from "./ui/notebook-controller";
+import { createNotebookViewState } from "./ui/view-state";
 
 export default function App() {
+  const controller = createNotebookController();
+  const view = createNotebookViewState(TINY_COMMERCE_IDS.root);
+
   return (
     <main class={styles.shell}>
       <header class={styles.header}>
-        <p class={styles.kicker}>Reactive notebook workspace</p>
-        <h1 class={styles.title}>HiBook</h1>
+        <div class={styles.identity}>
+          <p class={styles.kicker}>Reactive notebook</p>
+          <h1 class={styles.title}>HiBook</h1>
+        </div>
+        <div class={styles.runGroup}>
+          <span class={styles.runMessage} role="status" aria-live="polite">
+            {controller.running()
+              ? "Preparing and running…"
+              : controller.error()
+                ? "Execution failed"
+                : controller.prepared()
+                  ? "Notebook ready"
+                  : "Waiting to start…"}
+          </span>
+          <button
+            type="button"
+            class={styles.runButton}
+            disabled={controller.running()}
+            onClick={() => controller.runAll()}
+          >
+            Run all
+          </button>
+        </div>
       </header>
-      <p class={styles.status}>
-        The notebook is being built. Editing, execution, and persistence are not
-        available yet.
-      </p>
+
+      <Show when={controller.error()}>
+        <p class={styles.applicationError} role="alert">
+          {controller.error()}
+        </p>
+      </Show>
+
+      <NotebookTree controller={controller} view={view} />
     </main>
   );
 }
