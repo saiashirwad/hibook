@@ -1,6 +1,6 @@
 # HiBook roadmap
 
-Status: commits 1–3 are completed; commit 4 is pending.
+Status: commits 1–4 are completed; commit 5 is pending.
 
 1. **Completed — `chore: establish application and quality baseline`**  
    Vite, Solid, tooling, durable notes, semantic theme tokens, and the honest full-page shell.
@@ -8,8 +8,8 @@ Status: commits 1–3 are completed; commit 4 is pending.
    Serializable types, whole-document diagnostics, pure structural commands, sibling-scoped naming, and focused tests.
 3. **Completed — `runtime: resolve notebook paths and dependencies`**  
    Structural `root`/`parent`/`self` resolution, direct and `.children` paths, TypeScript AST extraction, deterministic graph layers, cycle groups, and downstream closure.
-4. **Pending — `runtime: execute reactive notebook transactions`**  
-   Registry, handles, synchronous execution, status, errors, and disposal.
+4. **Completed — `runtime: execute reactive notebook transactions`**  
+   Registry, readonly handles, synchronous preparation and execution, status, errors, and deterministic disposal.
 5. **Pending — `compiler: add fast preparation worker`**  
    Parsing, dependencies, syntax validation, transpilation, revision guards, coalescing, and reuse.
 6. **Pending — `ui: add deterministic reactive outliner`**  
@@ -25,7 +25,7 @@ Status: commits 1–3 are completed; commit 4 is pending.
 
 ## Demo boundary
 
-The planned demo is a deterministic Tiny Commerce notebook that demonstrates the normalized outline, reactive synchronous execution, safe Markdown, notebook-aware TypeScript tooling, and exact-revision hydration. The current work adds static path and dependency analysis only; it does not execute cells or connect notebook behavior to the application.
+The planned demo is a deterministic Tiny Commerce notebook that demonstrates the normalized outline, reactive synchronous execution, safe Markdown, notebook-aware TypeScript tooling, and exact-revision hydration. Commit 4 establishes the tested headless runtime transaction boundary; application UI integration remains pending.
 
 ## Deferred beyond the demo
 

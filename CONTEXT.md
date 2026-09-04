@@ -2,7 +2,7 @@
 
 ## Current state
 
-Commits 1–3 are complete. The project has a conventional client-only Vite/Solid 2 application baseline, a standalone normalized notebook model, and focused modules for structural path resolution, TypeScript AST dependency extraction, and ID-based graph operations. Commit 4 reactive notebook transactions are next. No sample notebook, execution registry, signals, compiler worker/coordinator, cache, Markdown pipeline, persistence, or model-to-UI integration exists yet.
+Commits 1–4 are complete. The project now includes headless runtime modules for owned Solid signal entries, readonly notebook handles, synchronous TypeScript preparation, and dependency-ordered transactions. Commit 5's compiler worker/coordinator is next. No sample notebook, cache, Markdown rendering pipeline, persistence, or model-to-UI integration exists yet.
 
 ## Architecture decisions
 
@@ -29,6 +29,14 @@ Commits 1–3 are complete. The project has a conventional client-only Vite/Soli
 - Path outcomes are stable typed results: resolved targets carry permanent `CellId`s, while missing, ambiguous, dynamic, and invalid outcomes carry source spans and never add guessed edges. Repeated references to the same child ID remain resolvable, but distinct same-name children or multiple parents in malformed snapshots are ambiguous.
 - `src/runtime/analyze-dependencies.ts` owns the TypeScript compiler API import. It analyzes `$` and `md` callbacks without executing code, preserves half-open source offsets and explicit `$<Type>` text, respects callback lexical shadowing including switch `CaseBlock` scope, reports computed or aliased handles, de-duplicates resolved target IDs, and leaves source unchanged. Scalar handle metadata and chains beyond runtime `.value` data are not misclassified as handle aliases or dependency paths; nested `.value` reads stop at the first runtime-value boundary. Text cells have no executable dependencies, and syntax/path failures remain per-cell issues.
 - Graph order is root-first document traversal followed by any remaining cell keys. Dependency and dependent maps preserve that order; topological layers batch ready acyclic cells; strongly connected groups include self-cycles; cells downstream of cycles are reported separately without blocking unrelated branches. Downstream closure includes known changed IDs and every transitive dependent in document order.
+
+## Headless execution decisions
+
+- `src/runtime/registry.ts` owns live per-cell state in a regular `Map<CellId, CellRuntime>`. Each entry owns boxed Solid signal values plus synchronous imperative peek state; successful, failed, and cycle resolutions advance a monotonic version. Registry synchronization publishes text source and explicitly disposes entries removed from the serialized document.
+- `src/runtime/read-handles.ts` derives frozen readonly handles from normalized structure. Direct named children and the explicit `children` form share handle identities, while `value` reads the current registry value. Runtime handles expose no structural mutation API and are never stored in `NotebookDocument`.
+- `src/runtime/prepare.ts` is a temporary synchronous TypeScript 5.9 preparation boundary for the headless executor. It preserves source and dependency analysis, strips TypeScript syntax, and rejects syntax errors, imports, top-level await, module-only exports, and `import.meta`. Unsupported module syntax receives a stable preparation error before code can reach `Function`. Commit 5 can provide prepared cells without changing transaction semantics.
+- `src/runtime/execute.ts` uses the existing graph layers and downstream closure, publishes every synchronous result before dependent execution, retains unaffected values, isolates ordinary cell failures, and reports cycle members and their blocked dependents per cell. JavaScript and Markdown callback results must be synchronous; Markdown results must be strings.
+- Notebook programs currently execute with `Function` in the page realm. This is intentionally unsandboxed and suitable only for trusted notebook code; preparation in a worker will not make execution a security boundary.
 
 ## Package decisions
 
@@ -85,6 +93,19 @@ Final Commit 3 validation on 2026-09-04:
 - The offline production audit found 0 vulnerabilities.
 - A throwaway `tsx` smoke scenario built `root`, `products`, and `metrics`; observed layers `[root, products] -> [metrics]`, the `metrics` dependency `products`, and downstream closure `[products, metrics]`.
 - No browser check was required because Commit 3 adds no visible behavior.
+
+Final Commit 4 validation on 2026-09-04:
+
+- `npm test -- --run` passed 10 test files and 56 tests.
+- `npm run typecheck` passed.
+- `npm run lint` passed.
+- `npm run build` passed.
+- The offline production audit found 0 vulnerabilities.
+- A browser-conditioned throwaway `tsx` smoke (`NODE_OPTIONS=--conditions=browser`) executed `input` → `derived` → Markdown `report`, published `# 42`, and reported executed IDs `input`, `derived`, and `report`.
+- A larger browser-conditioned smoke executed `products`, `regions`, `pricedProducts`, `metrics`, and `report`; a changed-products transaction reran only the affected closure, changed the report from `12` to `24`, and retained the unchanged `regions` version.
+- An initial smoke under default Node conditions emitted Solid's server-write warning. The browser-conditioned runs are the valid runtime proof because the application runtime uses Solid's browser condition.
+- Module-only exports and `import.meta` receive stable preparation rejection before the unsandboxed `Function` boundary.
+- No visible UI or browser surface changed, so no visual browser check was required.
 
 ## Performance measurements
 
