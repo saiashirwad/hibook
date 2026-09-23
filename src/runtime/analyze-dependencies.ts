@@ -5,7 +5,6 @@ import type {
   DependencyIssue,
   DependencyIssueClassification,
   DependencyIssueCode,
-  ExplicitAnnotation,
   NotebookPath,
   NotebookPathHop,
   NotebookPathOriginKind,
@@ -13,6 +12,7 @@ import type {
   SourceSpan,
 } from "./analysis-types";
 import { resolveNotebookPath } from "./resolve-path";
+import { cellSyntax, singleExpression, topLevelBindings } from "../compiler/cell-syntax";
 
 const CONTEXT_ORIGINS: Record<NotebookPathOriginKind, true> = {
   root: true,
@@ -272,91 +272,22 @@ function resolutionIssue(resolution: PathResolution): DependencyIssue | undefine
   }
 }
 
-function callbackExpression(
-  expression: ts.Expression | undefined,
-): ts.ArrowFunction | ts.FunctionExpression | undefined {
-  if (!expression) {
-    return undefined;
-  }
-  const unwrapped = unwrapExpression(expression);
-  return ts.isArrowFunction(unwrapped) || ts.isFunctionExpression(unwrapped)
-    ? unwrapped
-    : undefined;
-}
-
-interface CallbackContext {
-  readonly origins: ReadonlyMap<string, NotebookPathOriginKind>;
-  readonly issues: readonly DependencyIssue[];
-}
-
-function callbackContext(
-  callback: ts.ArrowFunction | ts.FunctionExpression,
-): CallbackContext {
-  const origins = new Map<string, NotebookPathOriginKind>();
-  const issues: DependencyIssue[] = [];
-  const parameter = callback.parameters[0];
-  if (!parameter) {
-    return { origins, issues };
-  }
-  if (!ts.isObjectBindingPattern(parameter.name)) {
-    issues.push(
-      issue(
-        "invalid",
-        "INVALID_CONTEXT_PARAMETER",
-        "The notebook callback context must use an object binding pattern.",
-        sourceSpan(parameter.name),
-      ),
-    );
-    return { origins, issues };
-  }
-
-  for (const element of parameter.name.elements) {
-    const propertyName = element.propertyName;
-    const declaredName = ts.isIdentifier(element.name)
-      ? element.name.text
-      : undefined;
-    const contextName = propertyName
-      ? ts.isIdentifier(propertyName) || ts.isStringLiteral(propertyName)
-        ? propertyName.text
-        : undefined
-      : declaredName;
-
-    if (!contextName || !Object.hasOwn(CONTEXT_ORIGINS, contextName)) {
-      continue;
-    }
-    if (!declaredName || (propertyName && declaredName !== contextName)) {
-      issues.push(
-        issue(
-          "aliased",
-          "ALIASED_CONTEXT",
-          `Aliasing the ${contextName} context handle is not supported.`,
-          sourceSpan(element),
-        ),
-      );
-      continue;
-    }
-    origins.set(declaredName, contextName as NotebookPathOriginKind);
-  }
-
-  return { origins, issues };
-}
-
-interface CallbackAnalysis {
+interface SourceAnalysis {
   readonly references: CellDependencyAnalysis["references"];
   readonly issues: readonly DependencyIssue[];
 }
 
-function analyzeCallback(
+function analyzeSource(
   document: NotebookDocument,
   cellId: CellId,
-  callback: ts.ArrowFunction | ts.FunctionExpression,
-): CallbackAnalysis {
-  const context = callbackContext(callback);
+  sourceFile: ts.SourceFile,
+): SourceAnalysis {
+  const origins = new Map(Object.keys(CONTEXT_ORIGINS).map((name) => [name, name as NotebookPathOriginKind]));
   const references: CellDependencyAnalysis["references"][number][] = [];
-  const issues = [...context.issues];
+  const issues: DependencyIssue[] = [];
 
   const visit = (node: ts.Node, shadowed: ReadonlySet<string>): void => {
-    if (isFunctionWithBody(node) && node !== callback) {
+    if (isFunctionWithBody(node)) {
       const localNames = new Set<string>();
       if (node.name && ts.isIdentifier(node.name)) {
         localNames.add(node.name.text);
@@ -405,7 +336,7 @@ function analyzeCallback(
       ts.isPropertyAccessExpression(node) &&
       node.name.text === "value"
     ) {
-      const path = pathFromValueRead(node, context.origins, scopedNames);
+      const path = pathFromValueRead(node, origins, scopedNames);
       if (path) {
         const resolution = resolveNotebookPath(document, cellId, path);
         references.push({ path, resolution });
@@ -419,7 +350,7 @@ function analyzeCallback(
     if (
       ts.isVariableDeclaration(node) &&
       node.initializer &&
-      isContextHandleExpression(node.initializer, context.origins, scopedNames)
+      isContextHandleExpression(node.initializer, origins, scopedNames)
     ) {
       issues.push(
         issue(
@@ -432,7 +363,7 @@ function analyzeCallback(
     } else if (
       ts.isBinaryExpression(node) &&
       node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      isContextHandleExpression(node.right, context.origins, scopedNames)
+      isContextHandleExpression(node.right, origins, scopedNames)
     ) {
       issues.push(
         issue(
@@ -447,31 +378,10 @@ function analyzeCallback(
     ts.forEachChild(node, (child) => visit(child, scopedNames));
   };
 
-  const initialShadowed = functionScopedVarBindings(callback);
-  visit(callback.body, initialShadowed);
+  const initialShadowed = new Set(functionScopedVarBindings(sourceFile));
+  for (const name of topLevelBindings(sourceFile)) initialShadowed.add(name);
+  visit(sourceFile, initialShadowed);
   return { references, issues };
-}
-
-interface ApiCall {
-  readonly call: ts.CallExpression;
-  readonly helper: "$" | "md";
-}
-
-function findApiCalls(sourceFile: ts.SourceFile): readonly ApiCall[] {
-  const calls: ApiCall[] = [];
-  const visit = (node: ts.Node): void => {
-    if (
-      ts.isCallExpression(node) &&
-      ts.isIdentifier(node.expression) &&
-      (node.expression.text === "$" || node.expression.text === "md")
-    ) {
-      calls.push({ call: node, helper: node.expression.text });
-      return;
-    }
-    ts.forEachChild(node, visit);
-  };
-  ts.forEachChild(sourceFile, visit);
-  return calls;
 }
 
 export function analyzeCellDependencies(
@@ -520,70 +430,44 @@ export function analyzeCellDependencies(
     };
   }
 
-  const expectedHelper = cell.kind === "markdown" ? "md" : "$";
-  const calls = findApiCalls(sourceFile).filter(
-    ({ helper }) => helper === expectedHelper,
-  );
-  if (calls.length === 0) {
+  let legacyCall: ts.CallExpression | undefined;
+  const findLegacyCall = (node: ts.Node): void => {
+    if (legacyCall) return;
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) &&
+      (node.expression.text === "$" || node.expression.text === "md")) {
+      legacyCall = node;
+      return;
+    }
+    ts.forEachChild(node, findLegacyCall);
+  };
+  ts.forEachChild(sourceFile, findLegacyCall);
+  if (legacyCall) {
     return {
       cellId: cell.id,
       kind: cell.kind,
       dependencies: [],
       references: [],
-      issues: [
-        issue(
-          "invalid",
-          "CALLBACK_REQUIRED",
-          `Cell source must call ${expectedHelper}() with a callback.`,
-          { start: 0, end: cell.source.length },
-        ),
-      ],
+      issues: [issue("invalid", "INVALID_CELL_SOURCE", "Callback helpers are not supported; use declarations, an expression, or md`...`.", sourceSpan(legacyCall))],
     };
   }
 
-  const issues: DependencyIssue[] = [];
-  if (calls.length > 1) {
-    const second = calls[1];
-    issues.push(
-      issue(
-        "invalid",
-        "MULTIPLE_CALLBACKS",
-        `Cell source may call ${expectedHelper}() only once.`,
-        second ? sourceSpan(second.call) : { start: 0, end: cell.source.length },
-      ),
-    );
+  const syntax = cellSyntax(sourceFile, cell.kind);
+  const expression = singleExpression(sourceFile);
+  const validTemplate = expression && ts.isTaggedTemplateExpression(expression) &&
+    ts.isIdentifier(expression.tag) && expression.tag.text === "md";
+  if (syntax === "template" && !validTemplate) {
+    return {
+      cellId: cell.id,
+      kind: cell.kind,
+      dependencies: [],
+      references: [],
+      issues: [issue("invalid", "INVALID_CELL_SOURCE", "Markdown cells must contain one md`...` template.", { start: 0, end: cell.source.length })],
+    };
   }
 
-  const references: CellDependencyAnalysis["references"][number][] = [];
-  let annotation: ExplicitAnnotation | undefined;
-  for (const { call, helper } of calls) {
-    if (helper === "$" && call.typeArguments?.length === 1 && !annotation) {
-      const typeNode = call.typeArguments[0];
-      if (typeNode) {
-        const span = sourceSpan(typeNode);
-        annotation = { text: cell.source.slice(span.start, span.end), span };
-      }
-    }
-
-    const callback = callbackExpression(call.arguments[0]);
-    if (!callback) {
-      issues.push(
-        issue(
-          "invalid",
-          "INVALID_CALLBACK",
-          `${helper}() must receive a callback as its first argument.`,
-          sourceSpan(call),
-        ),
-      );
-      continue;
-    }
-    const callbackAnalysis = analyzeCallback(document, cell.id, callback);
-    references.push(...callbackAnalysis.references);
-    issues.push(...callbackAnalysis.issues);
-  }
-
+  const analyzed = analyzeSource(document, cell.id, sourceFile);
   const dependencies: CellId[] = [];
-  for (const reference of references) {
+  for (const reference of analyzed.references) {
     if (
       reference.resolution.status === "resolved" &&
       !dependencies.includes(reference.resolution.targetId)
@@ -596,8 +480,7 @@ export function analyzeCellDependencies(
     cellId: cell.id,
     kind: cell.kind,
     dependencies,
-    references,
-    issues,
-    ...(annotation ? { annotation } : {}),
+    references: analyzed.references,
+    issues: analyzed.issues,
   };
 }

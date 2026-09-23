@@ -13,6 +13,8 @@ import type {
   PreparedNotebook,
 } from "./protocol";
 import { revisionForDocument } from "./protocol";
+import { cellSyntax, singleExpression, topLevelBindings } from "./cell-syntax";
+import type { CellSyntax } from "./cell-syntax";
 
 export const INVALID_TYPESCRIPT_ERROR =
   "Cell has invalid TypeScript and was not executed";
@@ -27,6 +29,7 @@ interface TranspiledCellCacheEntry {
   readonly kind: Cell["kind"];
   readonly source: string;
   readonly code: string;
+  readonly syntax: CellSyntax;
 }
 
 interface AnalyzedCellCacheEntry {
@@ -115,7 +118,6 @@ function hasTopLevelAwait(sourceFile: ts.SourceFile): boolean {
 
 function provisionalType(
   cell: Cell,
-  analysis: CellDependencyAnalysis,
   status: PreparedCellStatus,
 ): string {
   if (status === "invalid" || status === "cycle") {
@@ -124,7 +126,7 @@ function provisionalType(
   if (cell.kind === "text") {
     return "string";
   }
-  return analysis.annotation?.text ?? "unknown";
+  return "unknown";
 }
 
 function successfulPreparation(
@@ -132,6 +134,7 @@ function successfulPreparation(
   analysis: CellDependencyAnalysis,
   code: string,
   status: PreparedCellStatus,
+  syntax: CellSyntax | "text",
 ): PreparedCell {
   return {
     ok: true,
@@ -139,10 +142,11 @@ function successfulPreparation(
     kind: cell.kind,
     source: cell.source,
     code,
+    syntax,
     analysis,
     dependencies: [...analysis.dependencies],
     issues: [...analysis.issues],
-    type: provisionalType(cell, analysis, status),
+    type: provisionalType(cell, status),
     status,
   };
 }
@@ -225,18 +229,20 @@ export class FastPreparationCore {
         continue;
       }
       if (cell.kind === "text") {
-        preparedCells.push(successfulPreparation(cell, analysis, "", "text"));
+        preparedCells.push(successfulPreparation(cell, analysis, "", "text", "text"));
         continue;
       }
 
       const cached = this.#transpiled.get(cellId);
       let code: string | undefined;
+      let syntax: CellSyntax;
       if (
         cached?.cellId === cell.id &&
         cached.kind === cell.kind &&
         cached.source === cell.source
       ) {
         code = cached.code;
+        syntax = cached.syntax;
         reusedCells += 1;
       } else {
         const transpileStartedAt = now();
@@ -249,9 +255,13 @@ export class FastPreparationCore {
         );
         let errorCode: CellPreparationErrorCode | undefined;
         let errorMessage: string | undefined;
+        const sourceIssue = analysis.issues.find((entry) => entry.code === "INVALID_CELL_SOURCE");
         if (syntaxDiagnostics(sourceFile).length > 0) {
           errorCode = "INVALID_TYPESCRIPT";
           errorMessage = INVALID_TYPESCRIPT_ERROR;
+        } else if (sourceIssue) {
+          errorCode = "INVALID_CELL_SOURCE";
+          errorMessage = sourceIssue.message;
         } else if (hasImport(sourceFile)) {
           errorCode = "IMPORT_UNSUPPORTED";
           errorMessage = IMPORTS_UNSUPPORTED_ERROR;
@@ -271,7 +281,12 @@ export class FastPreparationCore {
           continue;
         }
 
-        const transpiled = ts.transpileModule(cell.source, {
+        syntax = cellSyntax(sourceFile, cell.kind);
+        const expression = singleExpression(sourceFile);
+        const executionSource = !expression || syntax === "bindings"
+          ? cell.source
+          : `return (${cell.source.slice(expression.getStart(sourceFile), expression.getEnd())});`;
+        const transpiled = ts.transpileModule(executionSource, {
           fileName: `${cell.id}.tsx`,
           reportDiagnostics: true,
           compilerOptions: {
@@ -298,6 +313,10 @@ export class FastPreparationCore {
           continue;
         }
         code = transpiled.outputText;
+        if (syntax === "bindings") {
+          const names = topLevelBindings(sourceFile);
+          code += `\nreturn { ${names.join(", ")} };`;
+        }
         transpileMs += now() - transpileStartedAt;
         transpiledCells += 1;
       }
@@ -305,16 +324,14 @@ export class FastPreparationCore {
       if (code === undefined) {
         throw new Error(`Missing transpiled output for cell: ${cellId}`);
       }
-      const cacheEntry = { cellId: cell.id, kind: cell.kind, source: cell.source, code };
+      const cacheEntry = { cellId: cell.id, kind: cell.kind, source: cell.source, code, syntax };
       nextTranspiled.set(cellId, cacheEntry);
       const status: PreparedCellStatus = cycleBlocked.has(cellId)
         ? "cycle"
         : analysis.issues.length > 0
           ? "invalid"
-          : analysis.annotation
-            ? "explicit"
-            : "inferred";
-      preparedCells.push(successfulPreparation(cell, analysis, code, status));
+          : "inferred";
+      preparedCells.push(successfulPreparation(cell, analysis, code, status, syntax));
     }
 
     this.#transpiled.clear();

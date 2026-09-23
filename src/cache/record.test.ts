@@ -8,7 +8,7 @@ import {
   validateNotebookCacheRecord,
 } from "./record";
 
-function notebook(source = "$(() => ({ answer: 42 }))"): NotebookDocument {
+function notebook(source = "({ answer: 42 })"): NotebookDocument {
   const root: Cell = {
     id: "root",
     name: "root",
@@ -75,7 +75,7 @@ describe("notebook cache records", () => {
   it("rejects changed revisions, incompatible compilers, malformed graphs, and partial preparation atomically", () => {
     const document = notebook();
     const record = exactRecord(document);
-    const changed = notebook("$(() => ({ answer: 43 }))");
+    const changed = notebook("({ answer: 43 })");
     expect(validateNotebookCacheRecord(record, changed)).toBeUndefined();
 
     expect(

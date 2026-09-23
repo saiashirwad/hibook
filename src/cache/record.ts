@@ -5,7 +5,7 @@ import { isPlainRecord } from "../model/validate";
 
 export const NOTEBOOK_CACHE_RECORD_VERSION = 1;
 export const NOTEBOOK_CACHE_COMPATIBILITY =
-  "hibook:typescript-5.9.3:notebook-schema-1:runtime-1:cache-1";
+  "hibook:typescript-5.9.3:notebook-schema-1:runtime-4:cache-1";
 export const NOTEBOOK_CACHE_REVISION_LIMIT = 8;
 
 export type JsonSafeValue =
@@ -215,7 +215,7 @@ function validIssue(value: unknown, sourceLength: number): boolean {
     isPlainRecord(value) &&
     keysExactly(value, ["classification", "code", "message", "span"]) &&
     ["syntax", "missing", "ambiguous", "dynamic", "invalid", "aliased"].includes(String(value.classification)) &&
-    ["SYNTAX_ERROR", "CALLBACK_REQUIRED", "MULTIPLE_CALLBACKS", "INVALID_CALLBACK", "INVALID_CONTEXT_PARAMETER", "ALIASED_CONTEXT", "MISSING_TARGET", "AMBIGUOUS_TARGET", "DYNAMIC_PATH", "INVALID_PATH"].includes(String(value.code)) &&
+    ["SYNTAX_ERROR", "INVALID_CELL_SOURCE", "ALIASED_CONTEXT", "MISSING_TARGET", "AMBIGUOUS_TARGET", "DYNAMIC_PATH", "INVALID_PATH"].includes(String(value.code)) &&
     typeof value.message === "string" &&
     validSpan(value.span, sourceLength)
   );
@@ -230,7 +230,6 @@ function validAnalysis(
 ): value is Record<string, unknown> {
   if (!isPlainRecord(value)) return false;
   const keys = ["cellId", "kind", "dependencies", "references", "issues"];
-  if (Object.hasOwn(value, "annotation")) keys.push("annotation");
   if (
     !keysExactly(value, keys) ||
     value.cellId !== cellId ||
@@ -241,17 +240,6 @@ function validAnalysis(
     !value.issues.every((issue) => validIssue(issue, sourceLength))
   ) {
     return false;
-  }
-  if (Object.hasOwn(value, "annotation")) {
-    const annotation = value.annotation;
-    if (
-      !isPlainRecord(annotation) ||
-      !keysExactly(annotation, ["text", "span"]) ||
-      typeof annotation.text !== "string" ||
-      !validSpan(annotation.span, sourceLength)
-    ) {
-      return false;
-    }
   }
   const resolved = new Set<string>();
   for (const reference of value.references) {
@@ -372,14 +360,14 @@ function validPreparedCell(
   const cell = document.cells[value.cellId];
   if (!cell) return false;
   const base = ["ok", "cellId", "kind", "source", "dependencies", "analysis", "issues", "type", "status"];
-  const shape = value.ok === true ? [...base, "code"] : value.ok === false ? [...base, "error"] : [];
+  const shape = value.ok === true ? [...base, "code", "syntax"] : value.ok === false ? [...base, "error"] : [];
   if (
     shape.length === 0 ||
     !keysExactly(value, shape) ||
     value.kind !== cell.kind ||
     value.source !== cell.source ||
     typeof value.type !== "string" ||
-    !["text", "explicit", "inferred", "invalid", "cycle"].includes(String(value.status)) ||
+    !["text", "inferred", "invalid", "cycle"].includes(String(value.status)) ||
     !validAnalysis(value.analysis, cell.id, cell.kind, cell.source.length, ids) ||
     !isStringArray(value.dependencies, ids) ||
     !equalJson(value.dependencies, value.analysis.dependencies) ||
@@ -389,16 +377,21 @@ function validPreparedCell(
     return false;
   }
   if (cell.kind === "text") {
-    return value.ok === true && value.code === "" && value.status === "text";
+    return value.ok === true && value.code === "" && value.syntax === "text" && value.status === "text";
   }
   if (value.ok === true) {
-    if (typeof value.code !== "string") return false;
+    if (
+      typeof value.code !== "string" ||
+      (cell.kind === "javascript"
+        ? value.syntax !== "bindings" && value.syntax !== "expression"
+        : value.syntax !== "template")
+    ) return false;
   } else {
     const error = value.error;
     if (
       !isPlainRecord(error) ||
       !keysExactly(error, ["code", "message"]) ||
-      !["INVALID_TYPESCRIPT", "IMPORT_UNSUPPORTED", "MODULE_SYNTAX_UNSUPPORTED", "TOP_LEVEL_AWAIT_UNSUPPORTED"].includes(String(error.code)) ||
+      !["INVALID_TYPESCRIPT", "INVALID_CELL_SOURCE", "IMPORT_UNSUPPORTED", "MODULE_SYNTAX_UNSUPPORTED", "TOP_LEVEL_AWAIT_UNSUPPORTED"].includes(String(error.code)) ||
       typeof error.message !== "string" ||
       value.status !== "invalid"
     ) {
@@ -409,9 +402,6 @@ function validPreparedCell(
   if (cycleBlocked.has(cell.id)) return value.status === "cycle";
   if ((value.issues as unknown[]).length > 0) return value.status === "invalid";
   if (value.status === "cycle" || value.status === "text") return false;
-  if (Object.hasOwn(value.analysis, "annotation")) {
-    return value.status === "explicit";
-  }
   return value.status === "inferred" || value.status === "invalid";
 }
 

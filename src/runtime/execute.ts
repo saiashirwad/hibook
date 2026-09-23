@@ -13,10 +13,8 @@ import {
   synchronizeRuntimeRegistry,
 } from "./registry";
 
-export const CALLBACK_REQUIRED_ERROR =
-  "Cell must call $() or md() with a callback";
 export const ASYNC_RESULT_ERROR = "Async cell results are not supported yet";
-export const MARKDOWN_RESULT_ERROR = "md() callback must return a string";
+export const MARKDOWN_RESULT_ERROR = "Markdown cell must produce a string";
 export const PREPARED_REVISION_MISMATCH_ERROR =
   "Prepared notebook revision does not match the document";
 
@@ -105,49 +103,28 @@ function preparationFor(
 
 function executePreparedCell(
   cell: Cell,
-  prepared: Extract<PreparedCell, { readonly ok: true }>,
+  code: string,
   context: RuntimeContext,
 ): unknown {
-  const expectedHelper = cell.kind === "markdown" ? "md" : "$";
-  let invocationCount = 0;
-  let callbackResult: unknown;
-
-  const invoke = (helper: "$" | "md", arguments_: readonly unknown[]): unknown => {
-    invocationCount += 1;
-    const callback = arguments_[0];
-    if (
-      invocationCount !== 1 ||
-      helper !== expectedHelper ||
-      arguments_.length !== 1 ||
-      typeof callback !== "function"
-    ) {
-      throw new Error(CALLBACK_REQUIRED_ERROR);
-    }
-    callbackResult = callback(context);
-    return callbackResult;
-  };
-
-  const dollar = (...arguments_: unknown[]): unknown => invoke("$", arguments_);
-  const markdown = (...arguments_: unknown[]): unknown => invoke("md", arguments_);
+  const markdown = (chunks: TemplateStringsArray, ...values: unknown[]): string =>
+    chunks.reduce((result, chunk, index) => result + (index ? String(values[index - 1]) : "") + chunk, "");
 
   // Trusted notebook code executes in the page realm. Function is explicitly
   // an unsandboxed execution boundary, not isolation for untrusted programs.
-  const evaluate = new Function("$", "md", prepared.code) as (
-    dollarHelper: typeof dollar,
+  const evaluate = new Function("md", "root", "parent", "self", code) as (
     markdownHelper: typeof markdown,
+    root: RuntimeContext["root"],
+    parent: RuntimeContext["parent"],
+    self: RuntimeContext["self"],
   ) => unknown;
-  evaluate(dollar, markdown);
-
-  if (invocationCount !== 1) {
-    throw new Error(CALLBACK_REQUIRED_ERROR);
-  }
-  if (isThenable(callbackResult)) {
+  const result = evaluate(markdown, context.root, context.parent, context.self);
+  if (isThenable(result)) {
     throw new Error(ASYNC_RESULT_ERROR);
   }
-  if (cell.kind === "markdown" && typeof callbackResult !== "string") {
+  if (cell.kind === "markdown" && typeof result !== "string") {
     throw new Error(MARKDOWN_RESULT_ERROR);
   }
-  return callbackResult;
+  return result;
 }
 
 export function executeNotebookTransaction(
@@ -212,7 +189,7 @@ export function executeNotebookTransaction(
         }
         const value = executePreparedCell(
           cell,
-          preparedCell,
+          preparedCell.code,
           handles.contextFor(cellId),
         );
         runtime.publish(value);

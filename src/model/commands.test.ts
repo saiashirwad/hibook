@@ -50,7 +50,7 @@ function newCell(id: string, name?: string): CellInput {
     id,
     kind: "javascript",
     ...(name === undefined ? {} : { name }),
-    source: `$(() => ${JSON.stringify(id)})`,
+    source: JSON.stringify(id),
     classes: ["code"],
     metadata: { editor: { folded: false } },
   };
@@ -124,7 +124,7 @@ describe("notebook commands", () => {
       "first",
       "after",
     ]);
-    expect(insertedAfter.cells.first?.source).toBe('$(() => "first")');
+    expect(insertedAfter.cells.first?.source).toBe('"first"');
     expect(initial.cells.right?.children).toEqual([]);
   });
 

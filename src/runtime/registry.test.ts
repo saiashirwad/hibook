@@ -96,7 +96,7 @@ describe("cell runtime registry", () => {
       rootId: "root",
       cells: {
         root: cell("root", "text", "Notebook", ["code"]),
-        code: cell("code", "javascript", "$(() => 1)"),
+        code: cell("code", "javascript", "1"),
       },
     };
     const serialized = JSON.stringify(document);

@@ -27,7 +27,8 @@ export function splitProse(source: string, cursor: number): ProseSplit {
 export function proseProgram(kind: "javascript" | "markdown", prose: string): string {
   const body = prose.trim();
   if (kind === "javascript") {
-    return body === "" ? "$(() => 0)" : `$(() => ${JSON.stringify(body)})`;
+    return body === "" ? "const value = 0" : `const value = ${JSON.stringify(body)}`;
   }
-  return body === "" ? 'md(() => "")' : `md(() => ${JSON.stringify(body)})`;
+  const literal = body.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$\{/g, "\\${");
+  return `md\`${literal}\``;
 }

@@ -58,7 +58,7 @@ function preparedCell(
 describe("fast notebook preparation", () => {
   it("uses exact deterministic serialization as the revision", () => {
     const document = flatDocument([
-      cell("value", "javascript", "$(() => 1)"),
+      cell("value", "javascript", "1"),
     ]);
 
     expect(revisionForDocument(document)).toBe(JSON.stringify(document));
@@ -68,35 +68,35 @@ describe("fast notebook preparation", () => {
         ...document,
         cells: {
           ...document.cells,
-          value: { ...document.cells.value!, source: "$(() => 2)" },
+          value: { ...document.cells.value!, source: "2" },
         },
       }),
     ).not.toBe(revisionForDocument(document));
   });
 
   it("returns serializable cells, graph data, provisional types, dependencies, and real timing counters", () => {
-    const input = cell("input", "javascript", "$(() => 2)");
+    const input = cell("input", "javascript", "2");
     const calculated = cell(
       "calculated",
       "javascript",
-      "$(({ root }) => root.section.input.value + root.children.section.children.input.value)",
+      "root.section.input.value + root.children.section.children.input.value",
     );
-    const explicit = cell("explicit", "javascript", "$<number>(() => 3)");
-    const invalid = cell("invalid", "javascript", "$(() => {");
+    const standalone = cell("standalone", "javascript", "3");
+    const invalid = cell("invalid", "javascript", "const value: = 1");
     const firstCycle = cell(
       "firstCycle",
       "javascript",
-      "$<string>(({ root }) => root.section.secondCycle.value)",
+      "root.section.secondCycle.value",
     );
     const secondCycle = cell(
       "secondCycle",
       "javascript",
-      "$(({ root }) => root.section.firstCycle.value)",
+      "root.section.firstCycle.value",
     );
     const section = cell("section", "text", "Section", [
       "input",
       "calculated",
-      "explicit",
+      "standalone",
       "invalid",
       "firstCycle",
       "secondCycle",
@@ -109,7 +109,7 @@ describe("fast notebook preparation", () => {
         section,
         input,
         calculated,
-        explicit,
+        standalone,
         invalid,
         firstCycle,
         secondCycle,
@@ -133,8 +133,8 @@ describe("fast notebook preparation", () => {
       type: "unknown",
     });
     expect(
-      prepared.cells.find((entry) => entry.cellId === "explicit"),
-    ).toMatchObject({ ok: true, status: "explicit", type: "number" });
+      prepared.cells.find((entry) => entry.cellId === "standalone"),
+    ).toMatchObject({ ok: true, status: "inferred", type: "unknown" });
     expect(
       prepared.cells.find((entry) => entry.cellId === "invalid"),
     ).toMatchObject({
@@ -178,19 +178,19 @@ describe("fast notebook preparation", () => {
 
   it("preserves the existing syntax and unsupported-module errors", () => {
     const cases = [
-      ["$(() => {", "INVALID_TYPESCRIPT", INVALID_TYPESCRIPT_ERROR],
+      ["const value: = 1", "INVALID_TYPESCRIPT", INVALID_TYPESCRIPT_ERROR],
       [
-        'import value from "package"; $(() => value)',
+        'import value from "package"; value',
         "IMPORT_UNSUPPORTED",
         IMPORTS_UNSUPPORTED_ERROR,
       ],
       [
-        "export const value = 1; $(() => value)",
+        "export const value = 1",
         "MODULE_SYNTAX_UNSUPPORTED",
         MODULE_SYNTAX_UNSUPPORTED_ERROR,
       ],
       [
-        "await Promise.resolve(); $(() => 1)",
+        "await Promise.resolve()",
         "TOP_LEVEL_AWAIT_UNSUPPORTED",
         TOP_LEVEL_AWAIT_UNSUPPORTED_ERROR,
       ],
@@ -207,12 +207,12 @@ describe("fast notebook preparation", () => {
   });
 
   it("reuses only byte-identical transpiled code while reanalyzing structural paths", () => {
-    const inputA = cell("inputA", "javascript", "$(() => 1)", [], "input");
-    const inputB = cell("inputB", "javascript", "$(() => 2)", [], "input");
+    const inputA = cell("inputA", "javascript", "1", [], "input");
+    const inputB = cell("inputB", "javascript", "2", [], "input");
     const derived = cell(
       "derived",
       "javascript",
-      "$(({ parent }) => parent.input.value)",
+      "parent.input.value",
     );
     const groupA = cell("groupA", "text", "A", ["inputA", "derived"]);
     const groupB = cell("groupB", "text", "B", ["inputB"]);
@@ -245,11 +245,11 @@ describe("fast notebook preparation", () => {
   });
 
   it("reuses dependency analyses for cells whose source and structure are unchanged", () => {
-    const count = cell("count", "javascript", "$(() => 1)");
+    const count = cell("count", "javascript", "1");
     const derived = cell(
       "derived",
       "javascript",
-      "$(({ root }) => root.count.value)",
+      "root.count.value",
     );
     const document = flatDocument([count, derived]);
     const core = new FastPreparationCore();
@@ -261,7 +261,7 @@ describe("fast notebook preparation", () => {
       ...document,
       cells: {
         ...document.cells,
-        count: { ...count, source: "$(() => 2)" },
+        count: { ...count, source: "2" },
       },
     });
     expect(analysisFor(edited, "derived")).toBe(analysisFor(first, "derived"));
@@ -271,7 +271,7 @@ describe("fast notebook preparation", () => {
       ...document,
       cells: {
         ...document.cells,
-        count: { ...count, source: "$(() => 2)", name: "renamed" },
+        count: { ...count, source: "2", name: "renamed" },
       },
     });
     expect(analysisFor(renamed, "derived")).not.toBe(

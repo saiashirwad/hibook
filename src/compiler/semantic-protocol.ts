@@ -3,7 +3,6 @@ import type { PreparedNotebook } from "./protocol";
 
 export type SemanticCellStatus =
   | "text"
-  | "explicit"
   | "inferred"
   | "invalid"
   | "cycle";

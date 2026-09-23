@@ -23,7 +23,7 @@ function cell(
 }
 
 function js(body: string): string {
-  return `$(({ root, self }) => ${body})`;
+  return body;
 }
 
 describe("notebook dependency graph", () => {

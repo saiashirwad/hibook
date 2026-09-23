@@ -80,10 +80,7 @@ export type DependencyIssueClassification =
 
 export type DependencyIssueCode =
   | "SYNTAX_ERROR"
-  | "CALLBACK_REQUIRED"
-  | "MULTIPLE_CALLBACKS"
-  | "INVALID_CALLBACK"
-  | "INVALID_CONTEXT_PARAMETER"
+  | "INVALID_CELL_SOURCE"
   | "ALIASED_CONTEXT"
   | "MISSING_TARGET"
   | "AMBIGUOUS_TARGET"
@@ -94,11 +91,6 @@ export interface DependencyIssue {
   readonly classification: DependencyIssueClassification;
   readonly code: DependencyIssueCode;
   readonly message: string;
-  readonly span: SourceSpan;
-}
-
-export interface ExplicitAnnotation {
-  readonly text: string;
   readonly span: SourceSpan;
 }
 
@@ -113,7 +105,6 @@ export interface CellDependencyAnalysis {
   readonly dependencies: readonly CellId[];
   readonly references: readonly DependencyReference[];
   readonly issues: readonly DependencyIssue[];
-  readonly annotation?: ExplicitAnnotation;
 }
 
 export interface DependencyCycleGroup {

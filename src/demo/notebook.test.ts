@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { revisionForDocument } from "../compiler/protocol";
+import { prepareExecution } from "../compiler/fast-prepare";
+import { executeNotebookTransaction } from "../runtime/execute";
+import { createRuntimeRegistry } from "../runtime/registry";
 import { TINY_COMMERCE_IDS, TINY_COMMERCE_NOTEBOOK } from "./notebook";
 
 describe("Tiny Commerce notebook", () => {
@@ -48,5 +51,16 @@ describe("Tiny Commerce notebook", () => {
     expect(TINY_COMMERCE_NOTEBOOK.cells[TINY_COMMERCE_IDS.report]?.source).toContain(
       "root.analysis.metrics.value",
     );
+  });
+
+  it("runs the callback-free demo through its Markdown report", () => {
+    const registry = createRuntimeRegistry();
+    executeNotebookTransaction(TINY_COMMERCE_NOTEBOOK, registry, {
+      prepared: prepareExecution(TINY_COMMERCE_NOTEBOOK),
+    });
+    expect(registry.get(TINY_COMMERCE_IDS.pricedProducts)?.status()).toBe("success");
+    expect(registry.get(TINY_COMMERCE_IDS.metrics)?.status()).toBe("success");
+    expect(registry.get(TINY_COMMERCE_IDS.report)?.status()).toBe("success");
+    expect(registry.get(TINY_COMMERCE_IDS.report)?.peek()).toContain("4 products");
   });
 });

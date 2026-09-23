@@ -56,7 +56,7 @@ type CellKind = "text" | "javascript" | "markdown"
 The three kinds are semantically distinct:
 
 text: regular prose/note content.
-javascript: executable typed JavaScript/TypeScript callback.
+javascript: executable typed JavaScript/TypeScript declarations or one expression.
 markdown: executable read-only template that returns Markdown.
 The outline must support:
 
@@ -211,23 +211,19 @@ A small randomize action.
 No silent source rewriting when names change.
 A rename may temporarily break references and surface diagnostics. Automatic refactoring must be a separate, explicit, previewable operation.
 
-7. Typed callback API
-   Executable JavaScript cells use:
+7. Cell-local code API
+   JavaScript cells publish either all top-level bindings or one standalone expression:
 
-$(({ self, parent, root }) => {
-return someValue
-})
-Templated Markdown cells use:
+const total = parent.budget.value.nightly * 3
+const label = `Total: ${total}`
 
-md(({ self, parent, root }) => {
-return `# Markdown`
-})
-Support explicit output annotations:
+parent.budget.value.total
 
-$<ResultType>(({ root }) => {
-return value
-})
-The callback context contains:
+Templated Markdown cells contain a single tagged template:
+
+md`# Total: ${parent.budget.value.total}`
+
+The cell-local lexical bindings are:
 
 interface RuntimeContext {
 self: CellHandle
@@ -314,15 +310,15 @@ Isolate failures to the affected cell where possible.
 Mark unresolved dependency loops as cycles.
 Expected exact errors include:
 
-Cell must call $() or md() with a callback
+Markdown cells must contain one md`...` template
 Async cell results are not supported yet
-md() callback must return a string
+Markdown cell must produce a string
 Reactive dependency cycle
 Cell has invalid TypeScript and was not executed
 Additional runtime rules:
 
-A cell may invoke $() or md() only once.
-The API argument must be a callback.
+Callback helpers are unsupported, including in previously saved notebook sources.
+One JavaScript expression publishes its value; top-level declarations publish their bindings.
 Promises are rejected for now.
 Imports and top-level await are not supported initially.
 Cancellation and resource cleanup remain future work.
@@ -375,22 +371,18 @@ Apply only after explicit confirmation. 11. Cross-cell TypeScript inference
 Text cells infer:
 
 string
-Explicit annotations are authoritative anchors:
-
-$<MyType>(...)
-For unannotated executable cells:
+For executable cells:
 
 Analyze dependencies.
 Process the graph topologically.
 Generate typed context declarations from already known upstream value types.
-Ask TypeScript for the callback’s published return type.
+Ask TypeScript for the expression or exported-bindings result type.
 Feed that printed type into downstream declarations.
 Normalize unusable results.
 Mark invalid and cyclic cells as unknown.
 Useful status values include:
 
 "text"
-"explicit"
 "inferred"
 "invalid"
 "cycle"
@@ -399,7 +391,6 @@ Invalid and cyclic cells should not poison the whole notebook process.
 Normalize {} to a more meaningful representation if appropriate, such as:
 
 Record<string, never>
-Explicit annotations may intentionally anchor cycles.
 
 12. TypeScript virtual project
     Use one notebook-level compiler coordinator, not one whole-notebook compiler process per editor.
@@ -597,7 +588,7 @@ Notebook path completion.
 Escape blurs the editor.
 Source synchronization with notebook state.
 Future Mod+Enter run support.
-Templated Markdown uses JavaScript/TypeScript syntax because its source is an md(callback) program.
+Templated Markdown uses JavaScript/TypeScript tagged-template syntax.
 
 Plain note editing uses Markdown-oriented CodeMirror behavior.
 
@@ -641,12 +632,12 @@ Do not accept “visually close.”
 
 marked to parse Markdown.
 DOMPurify to sanitize generated HTML.
-Never render callback-produced HTML unsafely.
+Never render template-produced HTML unsafely.
 
-Markdown callback requirements:
+Markdown template requirements:
 
-md(({ root }) => `# Report`)
-Callback must return a string.
+md`# Report: ${root.metrics.value.total}`
+The tag produces a string.
 The resulting string is the cell’s published value.
 The output is rendered as sanitized Markdown.
 Markdown gets read-only notebook handles.
@@ -810,7 +801,7 @@ Detect write/read feedback loops.
 Couple subtree deletion to runtime cleanup.
 Add undo/redo for structural transactions.
 Offer move-impact choices before rewriting references.
-Do not expose a mutable tree object directly to callbacks.
+Do not expose a mutable tree object directly to cell programs.
 
 24. Rename and move refactors
     Current policy:
@@ -925,26 +916,22 @@ Do not conflate moving the compiler to a worker with sandboxing execution.
 
 Example data cell:
 
-$(() => [
+[
 { sku: "lamp", name: "Paper Lamp", price: 42, region: "eu" },
 { sku: "chair", name: "Low Chair", price: 125, region: "us" },
 { sku: "vase", name: "Stone Vase", price: 68, region: "eu" },
 { sku: "desk", name: "Oak Desk", price: 310, region: "us" },
-])
+];
 Region configuration:
 
-$(() => ({
+({
 eu: { tax: 0.2, discount: 0.08, currency: "EUR" },
 us: { tax: 0.07, discount: 0.05, currency: "USD" },
-}))
+});
 Dependent products:
 
-$(({ root }) => {
-const products = root.data.products.value
-const regions = root.data.regions.value
-
-return products.map(product => {
-const region = regions[product.region as keyof typeof regions]
+root.data.products.value.map(product => {
+const region = root.data.regions.value[product.region as keyof typeof root.data.regions.value]
 const discounted = product.price * (1 - region.discount)
 
     return {
@@ -953,51 +940,35 @@ const discounted = product.price * (1 - region.discount)
       finalPrice: discounted * (1 + region.tax),
     }
 
-})
-})
+});
 Metrics:
 
-$(({ parent }) => {
 const products = parent.pricedProducts.value
 const total = products.reduce(
 (sum, product) => sum + product.finalPrice,
 0,
 )
 
-return {
-productCount: products.length,
-total,
-average: total / products.length,
-mostExpensive: products.reduce((best, product) =>
+const productCount = products.length
+const average = total / products.length
+const mostExpensive = products.reduce((best, product) =>
 product.finalPrice > best.finalPrice ? product : best
-),
-}
-})
+)
 Reactive Markdown dashboard:
 
-md(({ root }) => {
-const products = root.data.products.value
-const metrics = root.analysis.metrics.value
-const priceBar = "▰".repeat(Math.round(metrics.average / 25))
-const productParade = products
-.map(product => `**${product.name}**`)
-.join(" · ")
+md`# 🛍️ Tiny Commerce Lab
 
-return `# 🛍️ Tiny Commerce Lab
+We currently have **${root.analysis.metrics.value.productCount} products**:
 
-We currently have **${metrics.productCount} products**:
+${root.data.products.value.map(product => `**${product.name}**`).join(" · ")}
 
-${productParade}
-
-**Average-price-o-meter:** ${priceBar}
-**${metrics.average.toFixed(2)}**
+**Average-price-o-meter:** ${"▰".repeat(Math.round(root.analysis.metrics.value.average / 25))}
+**${root.analysis.metrics.value.average.toFixed(2)}**
 
 The heavyweight champion is
-**${metrics.mostExpensive.name.toUpperCase()}**
-at **${metrics.mostExpensive.finalPrice.toFixed(2)}
-${metrics.mostExpensive.currency}**.
-`
-})
+**${root.analysis.metrics.value.mostExpensive.name.toUpperCase()}**
+at **${root.analysis.metrics.value.mostExpensive.finalPrice.toFixed(2)}
+${root.analysis.metrics.value.mostExpensive.currency}**.`
 Editing the products cell should rerun:
 
 products
@@ -1033,12 +1004,12 @@ Direct named paths.
 Explicit .children paths.
 Root, parent, and self.
 Invalid paths.
-Explicit output annotations.
+Standalone expression and top-level binding results.
 Cycles.
 Shadowing where applicable.
 Inference
 Text cells infer string.
-Explicit annotations anchor types.
+Exported binding objects infer their fields.
 Topological inference.
 Same-layer batching.
 Invalid cells become unknown.
@@ -1064,7 +1035,7 @@ Execution
 Dependency order.
 Immediate upstream publication visible downstream.
 Markdown string validation.
-Missing callback errors.
+Invalid cell source errors.
 Async rejection.
 Invalid source isolation.
 Cycle handling.

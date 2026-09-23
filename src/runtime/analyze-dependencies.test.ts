@@ -55,16 +55,13 @@ function analysis(source: string, kind: CellKind = "javascript") {
 }
 
 describe("TypeScript dependency analysis", () => {
-  it("extracts mixed paths, stable IDs, source spans, annotations, and de-duplicates reads", () => {
-    const source = `$<ReadonlyArray< Product >>(({ root, parent, self }) => {
-  const direct = root.data.products.value;
-  const explicit = root.children.data.children.products.value;
-  const mixed = root.data.children.products.value;
-  const sibling = parent.input.value;
-  const descendant = self.local.value;
-  const duplicate = root.data.products.value;
-  return [direct, explicit, mixed, sibling, descendant, duplicate];
-})`;
+  it("extracts mixed paths, stable IDs, source spans, and de-duplicates reads", () => {
+    const source = `const direct = root.data.products.value;
+const explicit = root.children.data.children.products.value;
+const mixed = root.data.children.products.value;
+const sibling = parent.input.value;
+const descendant = self.local.value;
+const duplicate = root.data.products.value`;
     const { notebook, result } = analysis(source);
 
     expect(result.dependencies).toEqual([
@@ -73,13 +70,6 @@ describe("TypeScript dependency analysis", () => {
       "local-id",
     ]);
     expect(result.references).toHaveLength(6);
-    expect(result.annotation).toEqual({
-      text: "ReadonlyArray< Product >",
-      span: {
-        start: source.indexOf("ReadonlyArray"),
-        end: source.indexOf("ReadonlyArray") + "ReadonlyArray< Product >".length,
-      },
-    });
     const direct = result.references[0];
     expect(direct).toMatchObject({
       path: {
@@ -109,14 +99,10 @@ describe("TypeScript dependency analysis", () => {
   });
 
   it("reports missing, invalid, and computed paths without false edges", () => {
-    const source = `$(({ root }) => {
-  const key = "products";
-  return [
-    root.missing.value,
-    root.children.value,
-    root.data[key].value,
-  ];
-})`;
+    const source = `const key = "products";
+const missing = root.missing.value;
+const invalid = root.children.value;
+const dynamic = root.data[key].value`;
     const { result } = analysis(source);
 
     expect(result.dependencies).toEqual([]);
@@ -135,8 +121,7 @@ describe("TypeScript dependency analysis", () => {
   });
 
   it("respects lexical shadowing inside nested functions and blocks", () => {
-    const source = `$(({ root, parent }) => {
-  const product = root.data.products.value;
+    const source = `const product = root.data.products.value;
   function nested(root: { fake: { value: number } }) {
     return root.fake.value;
   }
@@ -155,8 +140,7 @@ describe("TypeScript dependency analysis", () => {
     default:
       root.fake.value;
   }
-  return product + nested({ fake: { value: 1 } });
-})`;
+  const result = product + nested({ fake: { value: 1 } })`;
     const { result } = analysis(source);
 
     expect(result.dependencies).toEqual(["products-id"]);
@@ -165,14 +149,11 @@ describe("TypeScript dependency analysis", () => {
   });
 
   it("does not classify scalar handle metadata or its value chains as aliases", () => {
-    const { result } = analysis(`$(({ root }) => {
-  const name = root.name;
-  const id = root.data.id;
-  const kind = root.data.kind;
-  const textLength = root.data.text.length;
-  const nameValue = root.name.value;
-  return [name, id, kind, textLength, nameValue];
-})`);
+    const { result } = analysis(`const name = root.name;
+const id = root.data.id;
+const kind = root.data.kind;
+const textLength = root.data.text.length;
+const nameValue = root.name.value`);
 
     expect(result.dependencies).toEqual([]);
     expect(result.references).toEqual([]);
@@ -180,10 +161,7 @@ describe("TypeScript dependency analysis", () => {
   });
 
   it("ignores reads beyond a runtime value while retaining the true dependency", () => {
-    const { result } = analysis(`$(({ root }) => {
-  const nested = root.data.products.value.value;
-  return nested;
-})`);
+    const { result } = analysis("const nested = root.data.products.value.value");
 
     expect(result.dependencies).toEqual(["products-id"]);
     expect(result.references).toHaveLength(1);
@@ -194,20 +172,11 @@ describe("TypeScript dependency analysis", () => {
     expect(result.issues).toEqual([]);
   });
 
-  it("reports callback and local handle aliases instead of guessing their targets", () => {
-    const callbackAlias = analysis(
-      `$(({ root: notebookRoot }) => notebookRoot.data.products.value)`,
-    ).result;
-    expect(callbackAlias.dependencies).toEqual([]);
-    expect(callbackAlias.issues).toMatchObject([
-      { classification: "aliased", code: "ALIASED_CONTEXT" },
-    ]);
-
-    const localAlias = analysis(`$(({ root }) => {
-  const products = root.data.products;
+  it("reports local handle aliases instead of guessing their targets", () => {
+    const localAlias = analysis(`const products = root.data.products;
   const children = root.children;
-  return [products.value, children];
-})`).result;
+  const productsValue = products.value;
+  const childrenValue = children`).result;
     expect(localAlias.dependencies).toEqual([]);
     expect(localAlias.issues).toMatchObject([
       { classification: "aliased", code: "ALIASED_CONTEXT" },
@@ -216,9 +185,7 @@ describe("TypeScript dependency analysis", () => {
   });
 
   it("keeps syntax failures local with stable offsets", () => {
-    const source = `$(({ root }) => {
-  return root.data.products.value;
-`;
+    const source = "const product = root.data.products.value;\nconst =";
     const { result } = analysis(source);
 
     expect(result.dependencies).toEqual([]);
@@ -231,16 +198,28 @@ describe("TypeScript dependency analysis", () => {
     expect(result.issues[0]?.span.end).toBeLessThanOrEqual(source.length);
   });
 
-  it("extracts dependencies from Markdown callbacks without executing them", () => {
+  it("extracts dependencies from tagged Markdown without executing it", () => {
     const { result } = analysis(
-      "md(({ root }) => `# ${root.data.products.value}`)",
+      "md`# ${root.data.products.value}`",
       "markdown",
     );
 
     expect(result.dependencies).toEqual(["products-id"]);
     expect(result.references).toHaveLength(1);
     expect(result.issues).toEqual([]);
-    expect(result.annotation).toBeUndefined();
+  });
+
+  it("tracks implicit handles in binding cells and tagged Markdown but not shadowed locals", () => {
+    const code = analysis(`const total = parent.input.value + root.data.products.value.length;
+function local(parent: { input: { value: number } }) { return parent.input.value }
+const adjusted = total + local({ input: { value: 2 } })`);
+    expect(code.result.dependencies).toEqual(["input-id", "products-id"]);
+    expect(code.result.references).toHaveLength(2);
+    expect(code.result.issues).toEqual([]);
+
+    const markdown = analysis("md`# ${parent.input.value} and ${self.local.value}`", "markdown");
+    expect(markdown.result.dependencies).toEqual(["input-id", "local-id"]);
+    expect(markdown.result.issues).toEqual([]);
   });
 
   it("treats text cells as non-executable even when their prose resembles code", () => {

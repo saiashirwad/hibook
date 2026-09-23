@@ -32,24 +32,20 @@ function cell(
   };
 }
 
-const productsSource = `$(() => [
+const productsSource = `[
   { sku: "lamp", name: "Paper Lamp", price: 42, region: "eu" },
   { sku: "chair", name: "Low Chair", price: 125, region: "us" },
   { sku: "vase", name: "Stone Vase", price: 68, region: "eu" },
   { sku: "desk", name: "Oak Desk", price: 310, region: "us" },
-])`;
+];`;
 
-const regionsSource = `$(() => ({
+const regionsSource = `({
   eu: { tax: 0.2, discount: 0.08, currency: "EUR" },
   us: { tax: 0.07, discount: 0.05, currency: "USD" },
-}))`;
+});`;
 
-const pricedProductsSource = `$(({ root }) => {
-  const products = root.data.products.value
-  const regions = root.children.data.children.regions.value
-
-  return products.map(product => {
-    const region = regions[product.region as keyof typeof regions]
+const pricedProductsSource = `root.data.products.value.map(product => {
+    const region = root.children.data.children.regions.value[product.region as keyof typeof root.children.data.children.regions.value]
     const discounted = product.price * (1 - region.discount)
 
     return {
@@ -57,49 +53,34 @@ const pricedProductsSource = `$(({ root }) => {
       currency: region.currency,
       finalPrice: discounted * (1 + region.tax),
     }
-  })
-})`;
+  });`;
 
-const metricsSource = `$(({ parent }) => {
-  const products = parent.pricedProducts.value
-  const total = products.reduce(
+const metricsSource = `const products = parent.pricedProducts.value
+const total = products.reduce(
     (sum, product) => sum + product.finalPrice,
     0,
   )
 
-  return {
-    productCount: products.length,
-    total,
-    average: total / products.length,
-    mostExpensive: products.reduce((best, product) =>
+const productCount = products.length
+const average = total / products.length
+const mostExpensive = products.reduce((best, product) =>
       product.finalPrice > best.finalPrice ? product : best
-    ),
-  }
-})`;
+    )`;
 
-const reportSource = `md(({ root }) => {
-  const products = root.data.products.value
-  const metrics = root.analysis.metrics.value
-  const priceBar = "▰".repeat(Math.round(metrics.average / 25))
-  const productParade = products
-    .map(product => \`**\${product.name}**\`)
-    .join(" · ")
+const reportSource = `md\`# 🛍️ Tiny Commerce Lab
 
-  return \`# 🛍️ Tiny Commerce Lab
+We currently have **\${root.analysis.metrics.value.productCount} products**:
 
-We currently have **\${metrics.productCount} products**:
+\${root.data.products.value.map(product => \`**\${product.name}**\`).join(" · ")}
 
-\${productParade}
-
-**Average-price-o-meter:** \${priceBar}
-**\${metrics.average.toFixed(2)}**
+**Average-price-o-meter:** \${"▰".repeat(Math.round(root.analysis.metrics.value.average / 25))}
+**\${root.analysis.metrics.value.average.toFixed(2)}**
 
 The heavyweight champion is
-**\${metrics.mostExpensive.name.toUpperCase()}**
-at **\${metrics.mostExpensive.finalPrice.toFixed(2)}
-\${metrics.mostExpensive.currency}**.
-\`
-})`;
+**\${root.analysis.metrics.value.mostExpensive.name.toUpperCase()}**
+at **\${root.analysis.metrics.value.mostExpensive.finalPrice.toFixed(2)}
+\${root.analysis.metrics.value.mostExpensive.currency}**.
+\``;
 
 export const TINY_COMMERCE_NOTEBOOK: NotebookDocument = {
   rootId: TINY_COMMERCE_IDS.root,
@@ -178,7 +159,7 @@ export const TINY_COMMERCE_NOTEBOOK: NotebookDocument = {
       TINY_COMMERCE_IDS.unrelatedVersion,
       "javascript",
       "branchVersion",
-      '$(() => ({ branch: "unrelated", version: 1 }))',
+      '({ branch: "unrelated", version: 1 })',
     ),
   },
 };

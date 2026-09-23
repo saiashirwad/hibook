@@ -27,9 +27,9 @@ function testDocument(): NotebookDocument {
   const cells = [
     cell("root", "text", "Notebook", ["intro", "base", "derived", "other"]),
     cell("intro", "text", "Prose"),
-    cell("base", "javascript", "$(() => 1)"),
-    cell("derived", "javascript", "$(({ root }) => root.base.value + 1)"),
-    cell("other", "javascript", "$(() => 2)"),
+    cell("base", "javascript", "1"),
+    cell("derived", "javascript", "root.base.value + 1"),
+    cell("other", "javascript", "2"),
   ];
   return {
     rootId: "root",
@@ -140,7 +140,7 @@ async function withController(
   try {
     // Cache hydration only starts under a rendered root, so an edit drives the
     // first preparation and inference instead.
-    controller.updateCellSource("base", "$(() => 10)");
+    controller.updateCellSource("base", "10");
     await settle(SEMANTIC_SETTLE_MS);
     expect(controller.semanticFor("derived").status).toBe("authoritative");
     await run(controller, inferences);
@@ -167,14 +167,14 @@ describe("notebook controller", () => {
       });
     });
     try {
-      controller.updateCellSource("base", "$(() => 7)");
+      controller.updateCellSource("base", "7");
       await settle(EXECUTION_SETTLE_MS);
       expect(controller.runtimeFor("base")?.status()).toBe("idle");
-      expect(saved.at(-1)).toEqual({ source: "$(() => 7)", enabled: false });
+      expect(saved.at(-1)).toEqual({ source: "7", enabled: false });
       controller.undo();
-      expect(controller.document().cells.base?.source).toBe("$(() => 1)");
+      expect(controller.document().cells.base?.source).toBe("1");
       controller.redo();
-      expect(controller.document().cells.base?.source).toBe("$(() => 7)");
+      expect(controller.document().cells.base?.source).toBe("7");
       expect(controller.executionEnabled()).toBe(false);
       expect(controller.runtimeFor("base")?.status()).toBe("idle");
     } finally {
@@ -205,7 +205,7 @@ describe("notebook controller", () => {
       const derived = controller.semanticFor("derived");
       const other = controller.semanticFor("other");
 
-      controller.updateCellSource("base", "$(() => 3)");
+      controller.updateCellSource("base", "3");
       expect(controller.semanticFor("other")).toBe(other);
       expect(controller.semanticFor("derived")).not.toBe(derived);
       expect(controller.semanticFor("derived").result).toBeUndefined();
@@ -225,7 +225,7 @@ describe("notebook controller", () => {
           rootId: "root",
           cells: {
             root: cell("root", "text", "Kyoto.\n\nStay, 18000 yen.\n\nThen a number.", ["base"]),
-            base: cell("base", "javascript", "$(() => 1)"),
+            base: cell("base", "javascript", "1"),
           },
         },
         executionEnabled: false,
@@ -318,10 +318,35 @@ describe("notebook controller", () => {
       expect(controller.convertCell("intro", "javascript")).toBeUndefined();
       expect(controller.document().cells.intro).toMatchObject({
         kind: "javascript",
-        source: '$(() => "Prose")',
+        source: 'const value = "Prose"',
       });
       expect(controller.convertCell("root", "javascript")?.code).toBe("ROOT_PROTECTED");
       expect(controller.document().cells.root?.kind).toBe("text");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("starts a blank note converted to code or live Markdown in the new syntax", () => {
+    let dispose!: () => void;
+    const controller = createRoot((disposeRoot) => {
+      dispose = disposeRoot;
+      return createNotebookController({
+        document: testDocument(),
+        executionEnabled: false,
+        cache: inertCache,
+        fastCoordinator: fastCoordinator(),
+        semanticCoordinator: semanticCoordinator({ count: 0 }),
+      });
+    });
+    try {
+      controller.updateCellSource("intro", "");
+      expect(controller.convertCell("intro", "javascript")).toBeUndefined();
+      expect(controller.document().cells.intro?.source).toBe("const value = 0");
+      expect(controller.convertCell("intro", "text")).toBeUndefined();
+      controller.updateCellSource("intro", "");
+      expect(controller.convertCell("intro", "markdown")).toBeUndefined();
+      expect(controller.document().cells.intro?.source).toBe("md``");
     } finally {
       dispose();
     }
@@ -342,14 +367,14 @@ describe("notebook controller", () => {
     try {
       const created = controller.createCell("intro", "markdown", "child");
       expect(typeof created).toBe("string");
-      expect(controller.document().cells[created as string]?.source).toBe('md(() => "Prose")');
+      expect(controller.document().cells[created as string]?.source).toBe("md`Prose`");
       const fromRoot = controller.createCell("root", "javascript", "child");
-      expect(controller.document().cells[fromRoot as string]?.source).toBe('$(() => "Notebook")');
+      expect(controller.document().cells[fromRoot as string]?.source).toBe('const value = "Notebook"');
       expect(controller.document().cells.intro?.children).toEqual([created]);
       expect(controller.document().cells.intro?.source).toBe("Prose");
       controller.updateCellSource("intro", "First paragraph.\n\nSecond paragraph.");
       const untouched = controller.createCell("intro", "javascript", "child");
-      expect(controller.document().cells[untouched as string]?.source).toBe("$(() => 0)");
+      expect(controller.document().cells[untouched as string]?.source).toBe("const value = 0");
       expect(controller.document().cells.intro?.source).toContain("First paragraph.");
     } finally {
       dispose();
@@ -360,7 +385,7 @@ describe("notebook controller", () => {
     await withController(async (controller) => {
       const preparation = controller.preparationFor("derived");
 
-      controller.updateCellSource("base", "$(() => 4)");
+      controller.updateCellSource("base", "4");
       expect(controller.prepared()).toBeDefined();
       expect(controller.preparedStale()).toBe(true);
       expect(controller.preparationFor("derived")).toBe(preparation);

@@ -119,7 +119,7 @@ describe("fast preparation coordinator", () => {
 
     expect(constructions).toBe(0);
     expect(coordinator.current()).toBeUndefined();
-    coordinator.synchronize(document("$(() => 1)"));
+    coordinator.synchronize(document("1"));
     expect(coordinator.current()).toBeUndefined();
     expect(coordinator.state()).toMatchObject({
       workerConstructed: false,
@@ -131,7 +131,7 @@ describe("fast preparation coordinator", () => {
   it("coalesces an exact in-flight revision with strict Promise identity and reuses its completed result", async () => {
     const worker = new ControlledWorker();
     const coordinator = new FastPreparationCoordinator(() => worker);
-    const notebook = document("$(() => 1)");
+    const notebook = document("1");
 
     const first = coordinator.prepareFast(notebook);
     const second = coordinator.prepareFast(notebook);
@@ -156,8 +156,8 @@ describe("fast preparation coordinator", () => {
   it("settles stale callers without publishing or caching their late response", async () => {
     const worker = new ControlledWorker();
     const coordinator = new FastPreparationCoordinator(() => worker);
-    const oldDocument = document("$(() => 1)");
-    const newDocument = document("$(() => 2)");
+    const oldDocument = document("1");
+    const newDocument = document("2");
     const oldPromise = coordinator.prepareFast(oldDocument);
     const newPromise = coordinator.prepareFast(newDocument);
     const oldRequest = worker.requests[0]!;
@@ -179,7 +179,7 @@ describe("fast preparation coordinator", () => {
   it("rejects request and revision mismatches instead of accepting unrelated output", async () => {
     const worker = new ControlledWorker();
     const coordinator = new FastPreparationCoordinator(() => worker);
-    const notebook = document("$(() => 1)");
+    const notebook = document("1");
     const wrongRequestPromise = coordinator.prepareFast(notebook);
     const request = worker.requests[0]!;
     const prepared = prepareExecution(notebook);
@@ -220,7 +220,7 @@ describe("fast preparation coordinator", () => {
     });
     const revisions = Array.from(
       { length: FAST_COMPLETED_REVISION_LIMIT + 1 },
-      (_, index) => document(`$(() => ${index})`),
+      (_, index) => document(`${index}`),
     );
 
     for (const notebook of revisions) {
@@ -261,22 +261,22 @@ describe("fast preparation coordinator", () => {
     const workers = [firstWorker, secondWorker];
     const coordinator = new FastPreparationCoordinator(() => workers.shift()!);
 
-    const typedFailure = coordinator.prepareFast(document("$(() => 1)"));
+    const typedFailure = coordinator.prepareFast(document("1"));
     firstWorker.fail(firstWorker.requests[0]!, "could not prepare");
     await expect(typedFailure).rejects.toThrow("could not prepare");
 
-    const crashed = coordinator.prepareFast(document("$(() => 2)"));
+    const crashed = coordinator.prepareFast(document("2"));
     firstWorker.onerror?.({ message: "worker crashed" });
     await expect(crashed).rejects.toThrow("worker crashed");
     expect(firstWorker.terminated).toBe(true);
 
-    const disposed = coordinator.prepareFast(document("$(() => 3)"));
+    const disposed = coordinator.prepareFast(document("3"));
     expect(secondWorker.requests).toHaveLength(1);
     coordinator.dispose();
     await expect(disposed).rejects.toBeInstanceOf(FastPreparationDisposedError);
     expect(secondWorker.terminated).toBe(true);
     await expect(
-      coordinator.prepareFast(document("$(() => 4)")),
+      coordinator.prepareFast(document("4")),
     ).rejects.toBeInstanceOf(FastPreparationDisposedError);
   });
 });
@@ -292,10 +292,10 @@ describe("execution preparation scheduler", () => {
       EXECUTION_DEBOUNCE_MS,
       timers,
     );
-    const first = scheduler.schedule(document("$(() => 1)")).catch(
+    const first = scheduler.schedule(document("1")).catch(
       (error: unknown) => error,
     );
-    const replacementDocument = document("$(() => 2)");
+    const replacementDocument = document("2");
     const replacement = scheduler.schedule(replacementDocument);
 
     await expect(first).resolves.toBeInstanceOf(
@@ -323,7 +323,7 @@ describe("execution preparation scheduler", () => {
       EXECUTION_DEBOUNCE_MS,
       timers,
     );
-    const scheduled = scheduler.schedule(document("$(() => 1)")).catch(
+    const scheduled = scheduler.schedule(document("1")).catch(
       (error: unknown) => error,
     );
 

@@ -25,10 +25,10 @@ describe("durable notebook document", () => {
   });
 
   it("exports source but disables execution on import", () => {
-    const exported = exportNotebook(notebook("$(() => window.alert('hi'))"));
+    const exported = exportNotebook(notebook("window.alert('hi')"));
     expect(parseNotebook(JSON.parse(exported) as unknown)).toEqual({
       formatVersion: 1,
-      document: notebook("$(() => window.alert('hi'))"),
+      document: notebook("window.alert('hi')"),
       executionEnabled: false,
     });
   });

@@ -1,4 +1,5 @@
 import type { CellId, CellKind, NotebookDocument } from "../model/types";
+import type { CellSyntax } from "./cell-syntax";
 import type {
   CellDependencyAnalysis,
   DependencyIssue,
@@ -6,13 +7,13 @@ import type {
 
 export type PreparedCellStatus =
   | "text"
-  | "explicit"
   | "inferred"
   | "invalid"
   | "cycle";
 
 export type CellPreparationErrorCode =
   | "INVALID_TYPESCRIPT"
+  | "INVALID_CELL_SOURCE"
   | "IMPORT_UNSUPPORTED"
   | "MODULE_SYNTAX_UNSUPPORTED"
   | "TOP_LEVEL_AWAIT_UNSUPPORTED";
@@ -37,6 +38,7 @@ export type PreparedCell =
   | (PreparedCellBase & {
       readonly ok: true;
       readonly code: string;
+      readonly syntax: CellSyntax | "text";
     })
   | (PreparedCellBase & {
       readonly ok: false;

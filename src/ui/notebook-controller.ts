@@ -108,8 +108,8 @@ export interface NotebookControllerOptions {
 
 const INITIAL_SOURCE: Record<CellKind, string> = {
   text: "",
-  javascript: "$(() => 0)",
-  markdown: "md(() => \"\")",
+  javascript: "const value = 0",
+  markdown: "md``",
 };
 
 function newCellId(): CellId {

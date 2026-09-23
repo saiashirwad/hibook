@@ -46,10 +46,11 @@ function inputFor(documentValue: NotebookDocument) {
 }
 
 describe("semantic notebook project", () => {
-  it("publishes text and explicit anchors authoritatively without inferred types", () => {
+  it("infers standalone expression and binding-cell types", () => {
     const notebook = document([
-      cell("root", "text", "Notebook", ["amount"]),
-      cell("amount", "javascript", "$<number>(() => 42)"),
+      cell("root", "text", "Notebook", ["amount", "budget"]),
+      cell("amount", "javascript", "42"),
+      cell("budget", "javascript", "const nightly = 18000; const nights = 3; const total = nightly * nights"),
     ]);
     const result = new SemanticProjectCore().infer(inputFor(notebook));
 
@@ -60,9 +61,15 @@ describe("semantic notebook project", () => {
     });
     expect(semanticCell(result.cells, "amount")).toMatchObject({
       authoritative: true,
-      status: "explicit",
-      type: "number",
+      status: "inferred",
+      type: "42",
     });
+    expect(semanticCell(result.cells, "budget")).toMatchObject({
+      authoritative: true,
+      status: "inferred",
+    });
+    expect(semanticCell(result.cells, "budget").type).toContain("nightly: number");
+    expect(semanticCell(result.cells, "budget").type).toContain("total: number");
     expect(result.timings.counters).toMatchObject({
       layers: 1,
       programBuilds: 1,
@@ -77,11 +84,7 @@ describe("semantic notebook project", () => {
       cell(
         "browser",
         "javascript",
-        `$(() => {
-  console.log(document.title, window.location.href)
-  setTimeout(() => { void fetch("/health") }, 0)
-  return true
-})`,
+        'typeof document.title === "string" && typeof window.location.href === "string" && typeof setTimeout === "function" && typeof fetch === "function"',
       ),
     ]);
     const result = semanticCell(
@@ -102,12 +105,12 @@ describe("semantic notebook project", () => {
       cell(
         "products",
         "javascript",
-        '$(() => [{ sku: "lamp", price: 42 }])',
+        '([{ sku: "lamp", price: 42 }])',
       ),
       cell(
         "count",
         "javascript",
-        "$(({ root }) => root.products.value.reduce((sum, product) => sum + product.price, 0))",
+        "root.products.value.reduce((sum, product) => sum + product.price, 0)",
       ),
     ]);
     const result = new SemanticProjectCore().infer(inputFor(notebook));
@@ -121,11 +124,55 @@ describe("semantic notebook project", () => {
     expect(result.timings.counters.programBuilds).toBe(2);
   });
 
+  it("infers exported bindings through implicit handles and offers their completions in Markdown", () => {
+    const notebook = document([
+      cell("root", "text", "Notebook", ["budget", "report"]),
+      cell("budget", "javascript", "const nightly = 18000; const nights = 3; const total = nightly * nights"),
+      cell("report", "markdown", "md`Total: ${parent.budget.value.total.toFixed(0)}`"),
+    ]);
+    const core = new SemanticProjectCore();
+    const input = inputFor(notebook);
+    const result = core.infer(input);
+    expect(semanticCell(result.cells, "budget")).toMatchObject({ status: "inferred", diagnostics: [] });
+    expect(semanticCell(result.cells, "budget").type).toContain("total: number");
+    expect(semanticCell(result.cells, "report")).toMatchObject({ status: "inferred", type: "string", diagnostics: [] });
+    const source = notebook.cells.report!.source;
+    const completion = core.completions(input, "report", source.indexOf(".total") + 1).completion;
+    expect(completion.items.map((item) => item.label)).toContain("total");
+  });
+
+  it("infers standalone expression values and diagnoses child-handle access without .value", () => {
+    const notebook = document([
+      cell("root", "text", "Notebook", ["calmRiver", "brightCloud", "incorrect"]),
+      cell("calmRiver", "javascript", 'const value = "Hi"; const c = "hi"'),
+      cell("brightCloud", "javascript", "parent.calmRiver.value.c"),
+      cell("incorrect", "javascript", "parent.calmRiver.c"),
+    ]);
+    const result = new SemanticProjectCore().infer(inputFor(notebook));
+    expect(semanticCell(result.cells, "brightCloud")).toMatchObject({
+      status: "inferred", type: "string", diagnostics: [],
+    });
+    expect(semanticCell(result.cells, "incorrect").diagnostics.some(
+      (diagnostic) => diagnostic.message.includes("Property 'c' does not exist"),
+    )).toBe(true);
+  });
+
+  it("infers expressions and Markdown despite trailing semicolons and comments", () => {
+    const notebook = document([
+      cell("root", "text", "Notebook", ["input", "output"]),
+      cell("input", "javascript", "40 + 2; // answer"),
+      cell("output", "markdown", "md`# ${parent.input.value}`; // summary"),
+    ]);
+    const result = new SemanticProjectCore().infer(inputFor(notebook));
+    expect(semanticCell(result.cells, "input")).toMatchObject({ status: "inferred", type: "number", diagnostics: [] });
+    expect(semanticCell(result.cells, "output")).toMatchObject({ status: "inferred", type: "string", diagnostics: [] });
+  });
+
   it("writes a whole ready layer before one shared Program build", () => {
     const notebook = document([
       cell("root", "text", "Notebook", ["left", "right"]),
-      cell("left", "javascript", "$(() => ({ side: \"left\" as const }))"),
-      cell("right", "javascript", "$(() => ({ side: \"right\" as const }))"),
+      cell("left", "javascript", '({ side: "left" as const })'),
+      cell("right", "javascript", '({ side: "right" as const })'),
     ]);
     const result = new SemanticProjectCore().infer(inputFor(notebook));
 
@@ -140,10 +187,10 @@ describe("semantic notebook project", () => {
   it("isolates invalid and cyclic cells while unrelated inference survives", () => {
     const notebook = document([
       cell("root", "text", "Notebook", ["broken", "first", "second", "safe"]),
-      cell("broken", "javascript", "$(() => {"),
-      cell("first", "javascript", "$(({ root }) => root.second.value)"),
-      cell("second", "javascript", "$(({ root }) => root.first.value)"),
-      cell("safe", "javascript", "$(() => ({ healthy: true }))"),
+      cell("broken", "javascript", "const value: = 1"),
+      cell("first", "javascript", "root.second.value"),
+      cell("second", "javascript", "root.first.value"),
+      cell("safe", "javascript", "({ healthy: true })"),
     ]);
     const result = new SemanticProjectCore().infer(inputFor(notebook));
 
@@ -168,15 +215,15 @@ describe("semantic notebook project", () => {
   it("reuses prior results only outside the source-change downstream closure", () => {
     const initial = document([
       cell("root", "text", "Notebook", ["input", "derived", "unrelated"]),
-      cell("input", "javascript", "$(() => 1)"),
-      cell("derived", "javascript", "$(({ root }) => root.input.value + 1)"),
-      cell("unrelated", "javascript", '$(() => ({ branch: "stable" }))'),
+      cell("input", "javascript", "1"),
+      cell("derived", "javascript", "root.input.value + 1"),
+      cell("unrelated", "javascript", '({ branch: "stable" })'),
     ]);
     const core = new SemanticProjectCore();
     core.infer(inputFor(initial));
     const changed = document([
       initial.cells.root!,
-      cell("input", "javascript", "$(() => 2)"),
+      cell("input", "javascript", "2"),
       initial.cells.derived!,
       initial.cells.unrelated!,
     ]);
@@ -204,8 +251,8 @@ describe("semantic notebook project", () => {
   it("maps completion, diagnostics, and quick info back to cell source offsets", () => {
     const completionNotebook = document([
       cell("root", "text", "Notebook", ["products", "editor"]),
-      cell("products", "javascript", "$(() => ({ price: 42 }))"),
-      cell("editor", "javascript", "$(({ root }) => root.)", ["nested"]),
+      cell("products", "javascript", "({ price: 42 })"),
+      cell("editor", "javascript", "root.", ["nested"]),
       cell("nested", "text", "Nested"),
     ]);
     const completionCore = new SemanticProjectCore();
@@ -221,8 +268,8 @@ describe("semantic notebook project", () => {
 
     const parentNotebook = document([
       cell("root", "text", "Notebook", ["products", "editor"]),
-      cell("products", "javascript", "$(() => ({ price: 42 }))"),
-      cell("editor", "javascript", "$(({ parent }) => parent.)"),
+      cell("products", "javascript", "({ price: 42 })"),
+      cell("editor", "javascript", "parent."),
     ]);
     const parentSource = parentNotebook.cells.editor!.source;
     const parentCompletion = new SemanticProjectCore().completions(
@@ -234,7 +281,7 @@ describe("semantic notebook project", () => {
 
     const selfNotebook = document([
       cell("root", "text", "Notebook", ["editor"]),
-      cell("editor", "javascript", "$(({ self }) => self.)", ["nested"]),
+      cell("editor", "javascript", "self.", ["nested"]),
       cell("nested", "text", "Nested"),
     ]);
     const selfSource = selfNotebook.cells.editor!.source;
@@ -247,11 +294,11 @@ describe("semantic notebook project", () => {
 
     const toolingNotebook = document([
       cell("root", "text", "Notebook", ["products", "consumer"]),
-      cell("products", "javascript", "$(() => ({ price: 42 }))"),
+      cell("products", "javascript", "({ price: 42 })"),
       cell(
         "consumer",
         "javascript",
-        "$(({ root }) => root.products.value.missing)",
+        "root.products.value.missing",
       ),
     ]);
     const toolingCore = new SemanticProjectCore();
@@ -280,7 +327,7 @@ describe("semantic notebook project", () => {
       cell(
         "report",
         "markdown",
-        'md(({ root }) => { root.value = "changed"; return "# Report" })',
+        'md`${(root.value = "changed", "# Report")}`',
       ),
     ]);
     const source = notebook.cells.report!.source;

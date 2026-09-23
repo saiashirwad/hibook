@@ -210,7 +210,7 @@ describe("semantic coordinator", () => {
       constructions += 1;
       return worker;
     });
-    const input = projectInput(notebook("$(() => 1)"));
+    const input = projectInput(notebook("1"));
 
     coordinator.synchronize(input.document);
     expect(constructions).toBe(0);
@@ -237,7 +237,7 @@ describe("semantic coordinator", () => {
     const coordinator = new SemanticCoordinator(() => worker);
     const inputs = Array.from(
       { length: SEMANTIC_COMPLETED_REVISION_LIMIT + 1 },
-      (_, index) => projectInput(notebook(`$(() => ${index})`)),
+      (_, index) => projectInput(notebook(`${index}`)),
     );
 
     for (const input of inputs) {
@@ -260,7 +260,7 @@ describe("semantic coordinator", () => {
   it("demand-starts each tooling operation without a prior inference request", async () => {
     const worker = new ControlledSemanticWorker();
     const coordinator = new SemanticCoordinator(() => worker);
-    const input = projectInput(notebook("$(({ root }) => root.value)"));
+    const input = projectInput(notebook("root.value"));
 
     const completionPromise = coordinator.completions(input, "code", 12);
     expect(worker.requests.map((request) => request.type)).toEqual(["completions"]);
@@ -303,11 +303,11 @@ describe("semantic coordinator", () => {
   it("rejects stale work and ignores its late response", async () => {
     const worker = new ControlledSemanticWorker();
     const coordinator = new SemanticCoordinator(() => worker);
-    const oldInput = projectInput(notebook("$(() => 1)"));
+    const oldInput = projectInput(notebook("1"));
     const stale = coordinator.infer(oldInput);
     const staleRequest = worker.requests[0]!;
 
-    coordinator.synchronize(notebook("$(() => 2)"));
+    coordinator.synchronize(notebook("2"));
     await expect(stale).rejects.toBeInstanceOf(StaleSemanticRequestError);
     worker.respond(staleRequest);
     expect(coordinator.current()).toBeUndefined();
@@ -317,13 +317,13 @@ describe("semantic coordinator", () => {
   it("terminates its independent worker and rejects pending work on dispose", async () => {
     const worker = new ControlledSemanticWorker();
     const coordinator = new SemanticCoordinator(() => worker);
-    const pending = coordinator.infer(projectInput(notebook("$(() => 1)")));
+    const pending = coordinator.infer(projectInput(notebook("1")));
 
     coordinator.dispose();
     await expect(pending).rejects.toBeInstanceOf(SemanticCoordinatorDisposedError);
     expect(worker.terminated).toBe(true);
     await expect(
-      coordinator.infer(projectInput(notebook("$(() => 2)"))),
+      coordinator.infer(projectInput(notebook("2"))),
     ).rejects.toBeInstanceOf(SemanticCoordinatorDisposedError);
   });
 
@@ -332,7 +332,7 @@ describe("semantic coordinator", () => {
     const semanticWorker = new ControlledSemanticWorker();
     const fast = new FastPreparationCoordinator(() => fastWorker);
     const semantic = new SemanticCoordinator(() => semanticWorker);
-    const document = notebook("$(() => 1)");
+    const document = notebook("1");
 
     const fastPromise = fast.prepareFast(document);
     expect(fastWorker.requests).toHaveLength(1);
@@ -367,10 +367,10 @@ describe("semantic inference scheduler", () => {
       SEMANTIC_DELAY_MS,
       timers,
     );
-    const first = scheduler.schedule(projectInput(notebook("$(() => 1)"))).catch(
+    const first = scheduler.schedule(projectInput(notebook("1"))).catch(
       (error: unknown) => error,
     );
-    const latestInput = projectInput(notebook("$(() => 2)"));
+    const latestInput = projectInput(notebook("2"));
     const latest = scheduler.schedule(latestInput);
 
     expect(timers.delays).toEqual([SEMANTIC_DELAY_MS, SEMANTIC_DELAY_MS]);

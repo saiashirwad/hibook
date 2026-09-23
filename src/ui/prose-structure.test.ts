@@ -37,15 +37,27 @@ describe("prose structure", () => {
 
   it("turns prose into a quoted program instead of a zero placeholder", () => {
     expect(proseProgram("javascript", "  18000 yen a night  ")).toBe(
-      '$(() => "18000 yen a night")',
+      'const value = "18000 yen a night"',
     );
     expect(proseProgram("markdown", "Friday — arrive")).toBe(
-      'md(() => "Friday — arrive")',
+      "md`Friday — arrive`",
     );
-    expect(proseProgram("javascript", " \n ")).toBe("$(() => 0)");
-    expect(proseProgram("markdown", "")).toBe('md(() => "")');
+    expect(proseProgram("javascript", " \n ")).toBe("const value = 0");
+    expect(proseProgram("markdown", "")).toBe("md``");
     expect(proseProgram("javascript", 'say "hi"\nthen go')).toBe(
-      '$(() => "say \\"hi\\"\\nthen go")',
+      'const value = "say \\"hi\\"\\nthen go"',
     );
+    expect(proseProgram("markdown", "Cost ${root.secret.value} `tick` \\path")).toBe(
+      "md`Cost \\${root.secret.value} \\`tick\\` \\\\path`",
+    );
+  });
+
+  it("keeps carried Markdown prose literal when the tag evaluates", () => {
+    const prose = "Cost ${globalThis.__hibookShouldNotRun} `tick` \\path";
+    const source = proseProgram("markdown", prose);
+    const evaluate = new Function("md", `return (${source});`) as (
+      tag: (parts: TemplateStringsArray) => string,
+    ) => string;
+    expect(evaluate((parts) => parts.join(""))).toBe(prose);
   });
 });

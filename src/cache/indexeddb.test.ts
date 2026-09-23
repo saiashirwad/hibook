@@ -21,7 +21,7 @@ function notebook(index: number): NotebookDocument {
     id: "code",
     name: "code",
     kind: "javascript",
-    source: `$(() => ${index})`,
+    source: `${index}`,
     classes: [],
     metadata: {},
     children: [],

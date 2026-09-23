@@ -1,5 +1,6 @@
 import ts from "typescript";
 import type { Cell, CellId } from "../model/types";
+import { cellSyntax, singleExpression, topLevelBindings } from "./cell-syntax";
 import { preparedDownstreamClosure, revisionForDocument } from "./protocol";
 import { BUNDLED_TYPESCRIPT_LIBS } from "./semantic-libs";
 import type {
@@ -251,15 +252,25 @@ function schemaSource(
 
 function wrappedSource(cell: Cell): { readonly source: string; readonly offset: number } {
   const contextModule = contextPathForCell(cell.id).slice(0, -5);
+  const sourceFile = ts.createSourceFile(`${cell.id}.ts`, cell.source, ts.ScriptTarget.Latest, true);
+  const syntax = cellSyntax(sourceFile, cell.kind);
+  const expression = singleExpression(sourceFile);
   const prefix = [
     `import type { NotebookContext } from ${quoted(contextModule)};`,
-    "declare const $: <T>(callback: (context: NotebookContext) => T) => T;",
-    "declare const md: (callback: (context: NotebookContext) => string) => string;",
-    "export const __hibookResult = (",
+    "declare const md: (strings: TemplateStringsArray, ...values: unknown[]) => string;",
+    "declare const root: NotebookContext['root'];",
+    "declare const parent: NotebookContext['parent'];",
+    "declare const self: NotebookContext['self'];",
+    ...(syntax === "bindings" ? [] : ["export const __hibookResult = ("]),
   ].join("\n");
   const sourcePrefix = `${prefix}\n`;
+  const suffix = syntax === "bindings"
+    ? `\nexport const __hibookResult = { ${topLevelBindings(sourceFile).join(", ")} };\n`
+    : "\n);\n";
   return {
-    source: `${sourcePrefix}${cell.source}\n);\n`,
+    source: `${sourcePrefix}${syntax === "bindings" || !expression
+      ? cell.source
+      : cell.source.slice(0, expression.getEnd())}${suffix}`,
     offset: sourcePrefix.length,
   };
 }
@@ -423,11 +434,6 @@ export class SemanticProjectCore {
         results.set(cellId, analysisResult(cellId, "invalid", "unknown", diagnostics));
       } else if (cell.kind === "text") {
         results.set(cellId, analysisResult(cellId, "text", "string"));
-      } else if (prepared.analysis.annotation) {
-        results.set(
-          cellId,
-          analysisResult(cellId, "explicit", prepared.analysis.annotation.text),
-        );
       }
     }
 
@@ -485,16 +491,11 @@ export class SemanticProjectCore {
       for (const cellId of checkable) {
         const mapping = this.#sourceMappings.get(cellId);
         const sourceFile = mapping ? program?.getSourceFile(mapping.path) : undefined;
-        const current = results.get(cellId);
         if (!mapping || !sourceFile || !program) {
-          if (!current) results.set(cellId, analysisResult(cellId, "invalid", "unknown"));
+          results.set(cellId, analysisResult(cellId, "invalid", "unknown"));
           continue;
         }
         const diagnostics = this.#diagnosticsFromProgram(program, sourceFile, mapping);
-        if (current?.status === "explicit") {
-          results.set(cellId, { ...current, diagnostics });
-          continue;
-        }
         const hasErrors = diagnostics.some((diagnostic) => diagnostic.severity === "error");
         const declaration = sourceFile.statements
           .filter(ts.isVariableStatement)

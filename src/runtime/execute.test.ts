@@ -9,8 +9,6 @@ import {
 } from "../compiler/fast-prepare";
 import {
   ASYNC_RESULT_ERROR,
-  CALLBACK_REQUIRED_ERROR,
-  MARKDOWN_RESULT_ERROR,
   executeNotebookTransaction,
 } from "./execute";
 import type { CellRuntimeRegistry } from "./registry";
@@ -63,45 +61,38 @@ describe("notebook transactions", () => {
     const products = cell(
       "products",
       "javascript",
-      '$(() => [{ name: "Lamp", price: 10, region: "eu" }])',
+      '[{ name: "Lamp", price: 10, region: "eu" }]',
     );
     const regions = cell(
       "regions",
       "javascript",
-      '$(() => ({ eu: { tax: 0.2, currency: "EUR" } }))',
+      '({ eu: { tax: 0.2, currency: "EUR" } })',
     );
     const data = cell("data", "text", "Data", ["products", "regions"]);
     const pricedProducts = cell(
       "pricedProducts",
       "javascript",
-      `$(({ root }) => {
-        const items = root.data.products.value
-        const configuration = root.children.data.children.regions.value
-        return items.map((item) => ({
+      `root.data.products.value.map((item) => ({
           ...item,
-          finalPrice: item.price * (1 + configuration[item.region].tax),
-          currency: configuration[item.region].currency,
-        }))
-      })`,
+          finalPrice: item.price * (1 + root.children.data.children.regions.value[item.region].tax),
+          currency: root.children.data.children.regions.value[item.region].currency,
+        }))`,
     );
     const metrics = cell(
       "metrics",
       "javascript",
-      `$(({ parent }) => {
-        const items = parent.pricedProducts.value
-        return { count: items.length, total: items.reduce((sum, item) => sum + item.finalPrice, 0) }
-      })`,
+      "({ count: parent.pricedProducts.value.length, total: parent.pricedProducts.value.reduce((sum, item) => sum + item.finalPrice, 0) })",
     );
     const analysis = cell("analysis", "text", "Analysis", ["pricedProducts", "metrics"]);
     const dashboard = cell(
       "dashboard",
       "markdown",
-      "md(({ root }) => `# ${root.data.products.value.length}:${root.analysis.metrics.value.total}`)",
+      "md`# ${root.data.products.value.length}:${root.analysis.metrics.value.total}`",
     );
     const unrelated = cell(
       "unrelated",
       "javascript",
-      "$(() => ({ stable: true }))",
+      "({ stable: true })",
     );
     const root = cell(
       "root",
@@ -152,7 +143,7 @@ describe("notebook transactions", () => {
     const updatedProducts = cell(
       "products",
       "javascript",
-      '$(() => [{ name: "Lamp", price: 20, region: "eu" }])',
+      '[{ name: "Lamp", price: 20, region: "eu" }]',
     );
     const updated: NotebookDocument = {
       ...document,
@@ -179,18 +170,18 @@ describe("notebook transactions", () => {
 
   it("publishes upstream values before downstream execution and continues unrelated branches after an error", () => {
     const document = flatDocument([
-      cell("upstream", "javascript", "$(() => 4)"),
+      cell("upstream", "javascript", "4"),
       cell(
         "downstream",
         "javascript",
-        "$(({ root }) => root.upstream.value + 3)",
+        "root.upstream.value + 3",
       ),
       cell(
         "broken",
         "javascript",
-        '$(() => { throw new Error("broken branch") })',
+        '(() => { throw new Error("broken branch") })()',
       ),
-      cell("independent", "javascript", "$(() => 9)"),
+      cell("independent", "javascript", "9"),
     ]);
     const registry = createRuntimeRegistry();
 
@@ -206,18 +197,18 @@ describe("notebook transactions", () => {
 
   it("rejects invalid TypeScript, imports, and top-level await without running those cells", () => {
     const document = flatDocument([
-      cell("syntax", "javascript", "$(() => {"),
+      cell("syntax", "javascript", "const value: = 1"),
       cell(
         "imported",
         "javascript",
-        'import "unavailable"; $(() => 1)',
+        'import "unavailable"; 1',
       ),
       cell(
         "awaited",
         "javascript",
-        "await Promise.resolve(); $(() => 1)",
+        "await Promise.resolve()",
       ),
-      cell("valid", "javascript", "$(() => 2)"),
+      cell("valid", "javascript", "2"),
     ]);
     const registry = createRuntimeRegistry();
 
@@ -231,37 +222,96 @@ describe("notebook transactions", () => {
     expect(registry.get("valid")?.peek()).toBe(2);
   });
 
-  it("enforces one callback-only API invocation", () => {
+  it("publishes direct expressions and parenthesized object literals", () => {
     const document = flatDocument([
-      cell("missing", "javascript", "const value = 1"),
-      cell("multiple", "javascript", "$(() => 1); $(() => 2)"),
-      cell("nonCallback", "javascript", "$(42)"),
-      cell("extraArgument", "javascript", "$(() => 1, 2)"),
-      cell("wrongHelper", "javascript", "md(() => 1)"),
+      cell("answer", "javascript", "42"),
+      cell("record", "javascript", "({ answer: root.answer.value })"),
     ]);
     const registry = createRuntimeRegistry();
 
     execute(document, registry);
 
-    for (const cellId of [
-      "missing",
-      "multiple",
-      "nonCallback",
-      "extraArgument",
-      "wrongHelper",
-    ]) {
-      expect(registry.get(cellId)?.status()).toBe("error");
-      expect(registry.get(cellId)?.error()).toBe(CALLBACK_REQUIRED_ERROR);
-    }
+    expect(registry.get("answer")?.peek()).toBe(42);
+    expect(registry.get("record")?.peek()).toEqual({ answer: 42 });
+  });
+
+  it("executes expressions and Markdown with semicolons or trailing comments", () => {
+    const document = flatDocument([
+      cell("input", "javascript", "41; // the answer is next"),
+      cell("sum", "javascript", "parent.input.value + 1; // stays reactive"),
+      cell("report", "markdown", "md`# ${parent.sum.value}`; // summary"),
+    ]);
+    const registry = createRuntimeRegistry();
+    expect(execute(document, registry).executedIds).toEqual(["input", "sum", "report"]);
+    expect(registry.get("sum")?.peek()).toBe(42);
+    expect(registry.get("report")?.peek()).toBe("# 42");
+    expect(execute({ ...document, cells: { ...document.cells, input: { ...document.cells.input!, source: "10 // edited" } } }, registry, ["input"]).executedIds).toEqual(["input", "sum", "report"]);
+    expect(registry.get("report")?.peek()).toBe("# 11");
+  });
+
+  it("rejects old callback cell sources without invoking them", () => {
+    const document = flatDocument([
+      cell("oldCode", "javascript", "$(() => 7)"),
+      cell("oldMarkdown", "markdown", "md(() => '# old')"),
+    ]);
+    const registry = createRuntimeRegistry();
+    execute(document, registry);
+    expect(registry.get("oldCode")?.status()).toBe("error");
+    expect(registry.get("oldCode")?.error()).toContain("Callback helpers are not supported");
+    expect(registry.get("oldMarkdown")?.status()).toBe("error");
+  });
+
+  it("exports top-level bindings and evaluates implicit handles in code and tagged Markdown", () => {
+    const document = flatDocument([
+      cell("budget", "javascript", "const nightly = 18000; const nights = 3; const total = nightly * nights"),
+      cell("extra", "javascript", "const { total: base } = parent.budget.value; function withTax(rate: number) { return base * (1 + rate) }; const taxed = withTax(0.25)"),
+      cell("report", "markdown", "md`# Trip\\n\\n${parent.extra.value.taxed} yen (${root.budget.value.nights} nights)`"),
+    ]);
+    const registry = createRuntimeRegistry();
+    const first = execute(document, registry);
+    expect(first.executedIds).toEqual(["budget", "extra", "report"]);
+    expect(registry.get("budget")?.peek()).toEqual({ nightly: 18000, nights: 3, total: 54000 });
+    expect((registry.get("extra")?.peek() as { taxed: number }).taxed).toBe(67500);
+    expect(registry.get("report")?.peek()).toBe("# Trip\n\n67500 yen (3 nights)");
+
+    const changed: NotebookDocument = {
+      ...document,
+      cells: { ...document.cells, budget: { ...document.cells.budget!, source: "const nightly = 20000; const nights = 3; const total = nightly * nights" } },
+    };
+    const second = execute(changed, registry, ["budget"]);
+    expect(second.executedIds).toEqual(["budget", "extra", "report"]);
+    expect((registry.get("extra")?.peek() as { taxed: number }).taxed).toBe(75000);
+    expect(registry.get("report")?.peek()).toContain("75000");
+  });
+
+  it("publishes a standalone expression instead of an empty export object", () => {
+    const document = flatDocument([
+      cell("calmRiver", "javascript", 'const value = "Hi"; const b = 235; const c = "hi"'),
+      cell("brightCloud", "javascript", "parent.calmRiver.value.c"),
+      cell("report", "markdown", "md`# ${parent.brightCloud.value}`"),
+    ]);
+    const registry = createRuntimeRegistry();
+    expect(execute(document, registry).executedIds).toEqual(["calmRiver", "brightCloud", "report"]);
+    expect(registry.get("brightCloud")?.peek()).toBe("hi");
+    expect(registry.get("report")?.peek()).toBe("# hi");
+  });
+
+  it("publishes the bindings of top-level declaration cells", () => {
+    const document = flatDocument([
+      cell("mixed", "javascript", 'const value = 42; const label = "answer"'),
+    ]);
+    const registry = createRuntimeRegistry();
+    execute(document, registry);
+    expect(registry.get("mixed")?.peek()).toEqual({ value: 42, label: "answer" });
   });
 
   it("rejects promises and thenables", () => {
     const document = flatDocument([
-      cell("promise", "javascript", "$(() => Promise.resolve(1))"),
+      cell("promise", "javascript", "Promise.resolve(1)"),
       cell(
         "thenable",
         "javascript",
-        "$(() => ({ then(resolve) { resolve(1) } }))",
+        "({ then(resolve) { resolve(1) } })",
       ),
     ]);
     const registry = createRuntimeRegistry();
@@ -272,15 +322,14 @@ describe("notebook transactions", () => {
     expect(registry.get("thenable")?.error()).toBe(ASYNC_RESULT_ERROR);
   });
 
-  it("publishes Markdown strings and rejects non-string Markdown results", () => {
+  it("publishes strings from tagged Markdown cells", () => {
     const document = flatDocument([
       cell("title", "text", "Commerce"),
       cell(
         "markdown",
         "markdown",
-        "md(({ root }) => `# ${root.title.value}`)",
+        "md`# ${root.title.value}`",
       ),
-      cell("invalidMarkdown", "markdown", "md(() => ({ value: 1 }))"),
     ]);
     const registry = createRuntimeRegistry();
 
@@ -289,18 +338,15 @@ describe("notebook transactions", () => {
     expect(registry.get("title")?.peek()).toBe("Commerce");
     expect(registry.get("markdown")?.peek()).toBe("# Commerce");
     expect(registry.get("markdown")?.status()).toBe("success");
-    expect(registry.get("invalidMarkdown")?.error()).toBe(
-      MARKDOWN_RESULT_ERROR,
-    );
   });
 
   it("marks cycle members, self-cycles, and cycle-blocked dependents without blocking independent work", () => {
     const document = flatDocument([
-      cell("a", "javascript", "$(({ root }) => root.b.value)"),
-      cell("b", "javascript", "$(({ root }) => root.a.value)"),
-      cell("after", "javascript", "$(({ root }) => root.a.value + 1)"),
-      cell("selfCycle", "javascript", "$(({ self }) => self.value)"),
-      cell("independent", "javascript", "$(() => 5)"),
+      cell("a", "javascript", "root.b.value"),
+      cell("b", "javascript", "root.a.value"),
+      cell("after", "javascript", "root.a.value + 1"),
+      cell("selfCycle", "javascript", "self.value"),
+      cell("independent", "javascript", "5"),
     ]);
     const registry = createRuntimeRegistry();
 
@@ -321,14 +367,14 @@ describe("notebook transactions", () => {
 
   it("consumes prepared output or an explicitly injected notebook preparer", () => {
     const preparedDocument = flatDocument([
-      cell("prepared", "javascript", "$<number>(() => 1)"),
+      cell("prepared", "javascript", "1"),
     ]);
     const baseline = prepareExecution(preparedDocument);
     const prepared: PreparedNotebook = {
       ...baseline,
       cells: baseline.cells.map((entry) =>
         entry.cellId === "prepared" && entry.ok
-          ? { ...entry, code: "$(() => 7);" }
+          ? { ...entry, code: "return (7);" }
           : entry,
       ),
     };
@@ -342,7 +388,7 @@ describe("notebook transactions", () => {
         ...prepared,
         cells: prepared.cells.map((entry) =>
           entry.cellId === "prepared" && entry.ok
-            ? { ...entry, code: "$(() => 11);" }
+            ? { ...entry, code: "return (11);" }
             : entry,
         ),
       }),
@@ -355,9 +401,9 @@ describe("notebook transactions", () => {
       cell(
         "realm",
         "javascript",
-        "$(() => globalThis.Math === Math && globalThis.Array === Array)",
+        "globalThis.Math === Math && globalThis.Array === Array",
       ),
-      cell("functionValue", "javascript", "$(() => Math.max)"),
+      cell("functionValue", "javascript", "Math.max"),
     ]);
     const registry = createRuntimeRegistry();
 
