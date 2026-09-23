@@ -1,6 +1,6 @@
 # HiBook roadmap
 
-Status: commits 1–10 are completed.
+Status: commits 1–10 and the follow-up local-first document milestone are complete.
 
 1. **Completed — `chore: establish application and quality baseline`**  
    Vite, Solid, tooling, durable notes, semantic theme tokens, and the honest full-page shell.
@@ -25,14 +25,14 @@ Status: commits 1–10 are completed.
 
 ## Demo boundary
 
-The completed demo is a deterministic Tiny Commerce notebook that demonstrates the normalized outline, reactive synchronous execution, safe Markdown, notebook-aware TypeScript tooling, exact-revision hydration, and responsive and accessible polish. Commits 6–10 complete the worker-backed outliner, direct CodeMirror editing, sanitized rendered Markdown, semantic inference and editor tooling, exact-revision cache hydration, and final browser-verified demo polish.
+The Tiny Commerce fixture remains available in source and tests, but new users now start with an unsaved blank writing surface. The local-first milestone adds document autosave/reopen, JSON export/import, document undo/redo, and a note-first chooser for adding calculations and live Markdown. Imported code stays paused until Run all is selected.
 
 ## Deferred beyond the demo
 
 - Callback structural mutation and typed transactions
-- Undo and redo
-- Rename/refactor previews and Oxc-assisted refactors
-- Notebook document persistence, migrations, import, and export
+- Coalesced editing history, richer rename/move refactor previews and Oxc-assisted refactors
+- Multi-notebook management, cross-tab coordination, and future format migrations (v1 is validated; unknown versions are rejected)
+- A user-observed personal-document experiment to guide progressive enrichment and reference insertion
 - Async execution, cancellation, and resource ownership
 - Secure execution isolation
 - Dynamic and aliased dependency-path analysis

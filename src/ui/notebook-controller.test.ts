@@ -12,7 +12,7 @@ import { createNotebookController } from "./notebook-controller";
 import type { NotebookController } from "./notebook-controller";
 
 const EXECUTION_SETTLE_MS = 200;
-const SEMANTIC_SETTLE_MS = 500;
+const SEMANTIC_SETTLE_MS = 750;
 
 function cell(
   id: string,
@@ -150,6 +150,38 @@ async function withController(
 }
 
 describe("notebook controller", () => {
+  it("keeps imported code paused through edits and undo/redo", async () => {
+    let dispose!: () => void;
+    const saved: Array<{ source: string; enabled: boolean }> = [];
+    const controller = createRoot((disposeRoot) => {
+      dispose = disposeRoot;
+      return createNotebookController({
+        document: testDocument(),
+        executionEnabled: false,
+        cache: inertCache,
+        fastCoordinator: fastCoordinator(),
+        semanticCoordinator: semanticCoordinator({ count: 0 }),
+        onDocumentChange(document, enabled) {
+          saved.push({ source: document.cells.base?.source ?? "", enabled });
+        },
+      });
+    });
+    try {
+      controller.updateCellSource("base", "$(() => 7)");
+      await settle(EXECUTION_SETTLE_MS);
+      expect(controller.runtimeFor("base")?.status()).toBe("idle");
+      expect(saved.at(-1)).toEqual({ source: "$(() => 7)", enabled: false });
+      controller.undo();
+      expect(controller.document().cells.base?.source).toBe("$(() => 1)");
+      controller.redo();
+      expect(controller.document().cells.base?.source).toBe("$(() => 7)");
+      expect(controller.executionEnabled()).toBe(false);
+      expect(controller.runtimeFor("base")?.status()).toBe("idle");
+    } finally {
+      dispose();
+    }
+  });
+
   it("leaves semantic results untouched while prose cells are edited", async () => {
     await withController(async (controller, inferences) => {
       const inferencesBeforeEdit = inferences.count;

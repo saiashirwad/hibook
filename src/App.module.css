@@ -5,6 +5,41 @@
   overflow-x: clip;
 }
 
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  min-height: 3.5rem;
+  padding: 0.5rem clamp(0.75rem, 3vw, 2rem);
+  border-bottom: 1px solid var(--line);
+}
+
+.brand { color: var(--ink-strong); font-size: 0.95rem; }
+.saveStatus { color: var(--ink-muted); font-size: 0.76rem; }
+.tools { display: flex; gap: 0.25rem; margin-left: auto; }
+.tools button, .recovery button {
+  padding: 0.4rem 0.6rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+  font-size: 0.78rem;
+}
+.tools button:hover, .recovery button:hover { color: var(--ink-strong); background: var(--surface-subtle); }
+.tools button:disabled { opacity: 0.4; cursor: default; }
+.tools button:focus-visible, .recovery button:focus-visible { outline: 2px solid var(--accent); }
+.fileInput { display: none; }
+.recovery { max-width: 42rem; margin: 15vh auto; padding: 1.5rem; }
+.recovery h1 { font-size: 1.5rem; }
+.importError { margin: 1rem; color: var(--danger); }
+
+@media (max-width: 40rem) {
+  .toolbar { flex-wrap: wrap; gap: 0.35rem; }
+  .tools { order: 2; width: 100%; justify-content: space-between; }
+  .saveStatus { margin-left: auto; }
+}
+
 .notice {
   display: flex;
   align-items: center;

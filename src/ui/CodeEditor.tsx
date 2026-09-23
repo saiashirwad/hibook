@@ -18,6 +18,7 @@ import {
   highlightSpecialChars,
   hoverTooltip,
   keymap,
+  placeholder,
 } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
 import { createEffect, onSettled } from "solid-js";
@@ -301,6 +302,7 @@ export default function CodeEditor(props: CodeEditorProps) {
       drawSelection(),
       highlightSpecialChars(),
       ...languageExtensions(props.kind),
+      ...(props.kind === "text" ? [placeholder("Start writing…")] : []),
       EditorView.lineWrapping,
       editorTheme,
       keymap.of([

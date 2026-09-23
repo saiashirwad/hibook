@@ -26,7 +26,6 @@ import type {
   SemanticProjectInput,
   SemanticQuickInfo,
 } from "../compiler/semantic-protocol";
-import { TINY_COMMERCE_NOTEBOOK } from "../demo/notebook";
 import { appendChild, insertSibling, update } from "../model/commands";
 import type {
   CellId,
@@ -70,6 +69,11 @@ export interface NotebookController {
   readonly hydrating: Accessor<boolean>;
   readonly cached: Accessor<boolean>;
   readonly preparedStale: Accessor<boolean>;
+  readonly executionEnabled: Accessor<boolean>;
+  readonly canUndo: Accessor<boolean>;
+  readonly canRedo: Accessor<boolean>;
+  undo(): void;
+  redo(): void;
   runAll(): void;
   runCell(cellId: CellId): void;
   updateCellSource(cellId: CellId, source: string): CommandError | undefined;
@@ -92,12 +96,14 @@ export interface NotebookControllerOptions {
   readonly cache?: NotebookCache;
   readonly fastCoordinator?: FastPreparationCoordinator;
   readonly semanticCoordinator?: SemanticCoordinator;
+  readonly executionEnabled?: boolean;
+  readonly onDocumentChange?: (document: NotebookDocument, executionEnabled: boolean) => void;
 }
 
 const INITIAL_SOURCE: Record<CellKind, string> = {
   text: "",
-  javascript: "$(() => {\n  \n})",
-  markdown: "md(() => `\n`)",
+  javascript: "$(() => 0)",
+  markdown: "md(() => \"# Live view\")",
 };
 
 function errorMessage(error: unknown): string {
@@ -224,7 +230,15 @@ function expectedSemanticInterruption(error: unknown): boolean {
 export function createNotebookController(
   options: NotebookControllerOptions = {},
 ): NotebookController {
-  const initialDocument = options.document ?? TINY_COMMERCE_NOTEBOOK;
+  const initialDocument = options.document ?? {
+    rootId: "notebook-root",
+    cells: {
+      "notebook-root": {
+        id: "notebook-root", name: "notebook", kind: "text" as const,
+        source: "", classes: [], metadata: {}, children: [],
+      },
+    },
+  };
   const coordinator = options.fastCoordinator ?? new FastPreparationCoordinator();
   const executionScheduler = new ExecutionPreparationScheduler((document) =>
     coordinator.prepareFast(document),
@@ -265,6 +279,10 @@ export function createNotebookController(
   const [cached, setCached] = createSignal(false);
   const [preparedStale, setPreparedStale] = createSignal(false);
   const [runtimeEpoch, setRuntimeEpoch] = createSignal(0);
+  const [executionEnabled, setExecutionEnabled] = createSignal(options.executionEnabled ?? true);
+  const [historyIndex, setHistoryIndex] = createSignal(0);
+  const [historyLength, setHistoryLength] = createSignal(1);
+  let history = [initialDocument];
 
   let currentDocument = initialDocument;
   let currentRevision = revisionForDocument(initialDocument);
@@ -282,10 +300,16 @@ export function createNotebookController(
   let queuedRun = false;
   let disposed = false;
 
-  const adoptDocument = (document: NotebookDocument): void => {
+  const adoptDocument = (document: NotebookDocument, recordHistory = true): void => {
     currentDocument = document;
     currentRevision = revisionForDocument(document);
     setDocumentBox({ current: document });
+    if (recordHistory) {
+      history = [...history.slice(Math.max(0, historyIndex() - 99), historyIndex() + 1), document];
+      setHistoryIndex(history.length - 1);
+      setHistoryLength(history.length);
+    }
+    options.onDocumentChange?.(document, executionEnabled());
   };
 
   const rebuildVisiblePreparation = (): void => {
@@ -574,6 +598,10 @@ export function createNotebookController(
 
   const hydrate = async (snapshot: NotebookDocument): Promise<void> => {
     const revision = currentRevision;
+    if (!executionEnabled()) {
+      setHydrating(false);
+      return;
+    }
     synchronizeRuntimeRegistry(registry, snapshot);
     setRuntimeEpoch((current) => current + 1);
     let hydrated = false;
@@ -636,15 +664,45 @@ export function createNotebookController(
     hydrating,
     cached,
     preparedStale,
+    executionEnabled,
+    canUndo: () => historyIndex() > 0,
+    canRedo: () => historyIndex() < historyLength() - 1,
+    undo() {
+      if (historyIndex() === 0) return;
+      const index = historyIndex() - 1;
+      setHistoryIndex(index);
+      const snapshot = history[index];
+      if (!snapshot) return;
+      adoptDocument(snapshot, false);
+      invalidateSemantic(snapshot);
+      if (executionEnabled()) void runDocument(snapshot);
+      else synchronizeRuntimeRegistry(registry, snapshot);
+    },
+    redo() {
+      if (historyIndex() >= history.length - 1) return;
+      const index = historyIndex() + 1;
+      setHistoryIndex(index);
+      const snapshot = history[index];
+      if (!snapshot) return;
+      adoptDocument(snapshot, false);
+      invalidateSemantic(snapshot);
+      if (executionEnabled()) void runDocument(snapshot);
+      else synchronizeRuntimeRegistry(registry, snapshot);
+    },
     runAll() {
       if (hydrating()) {
         queuedRun = true;
         return;
       }
+      if (!executionEnabled()) {
+        setExecutionEnabled(true);
+        options.onDocumentChange?.(currentDocument, true);
+      }
       invalidateSemantic(currentDocument);
       void runDocument(currentDocument);
     },
     runCell(cellId) {
+      if (!executionEnabled()) return;
       if (hydrating()) {
         queuedRun = true;
         return;
@@ -662,7 +720,7 @@ export function createNotebookController(
       if (currentCell?.kind !== "text") {
         invalidateSemantic(result.document, [cellId]);
       }
-      void runDocument(result.document, [cellId], true);
+      if (executionEnabled()) void runDocument(result.document, [cellId], true);
       return undefined;
     },
     renameCell(cellId, name) {
@@ -674,7 +732,7 @@ export function createNotebookController(
 
       adoptDocument(result.document);
       invalidateSemantic(result.document, [cellId]);
-      void runDocument(result.document);
+      if (executionEnabled()) void runDocument(result.document);
       return undefined;
     },
     createCell(referenceId, kind, placement) {
@@ -693,7 +751,7 @@ export function createNotebookController(
 
       adoptDocument(result.document);
       invalidateSemantic(result.document, [input.id]);
-      void runDocument(result.document, [input.id]);
+      if (executionEnabled()) void runDocument(result.document, [input.id]);
       return input.id;
     },
     runtimeFor(cellId) {

@@ -2,7 +2,13 @@
 
 ## Current state
 
-Commits 1–10 are complete. The app uses a deterministic Tiny Commerce notebook as a full-width recursive outliner, with one lazy fast worker for preparation, normalized model commands for document and source changes, direct CodeMirror editing, sanitized rendered Markdown, bounded exact-revision compiler/output hydration, and browser-verified responsive and accessible polish. A separate lazy semantic worker owns the notebook-wide TypeScript project and editor tooling. Notebook documents remain intentionally unpersisted.
+Commits 1–10 are complete. The app now starts with a blank document instead of the deterministic Tiny Commerce fixture. A separate IndexedDB database holds the version-1 source document independently of the bounded compiler/output cache. Source and structure edits autosave in order; JSON import/export and document-level undo/redo are available. Imported executable code remains paused until an explicit Run all, while the current page-realm execution boundary remains unsandboxed. The Tiny Commerce fixture stays in source and tests.
+
+## Local-first document decisions
+
+- `src/storage/document.ts` stores one validated `{ formatVersion: 1, document, executionEnabled }` snapshot under `current` in the `hibook-documents` database. Writes are serialized, and save failures are shown rather than treated like cache misses. Exports always disable execution on import. Unknown future formats and malformed trees are rejected without overwriting the current document.
+- `src/main.tsx` loads the document before mounting the controller/view; an empty store produces a blank unsaved root, while a load failure shows a recovery/import surface instead of silently replacing data. Import explicitly confirms replacement and remounts the controller with execution disabled.
+- The controller keeps a bounded in-memory document history for undo/redo, but this is not a persistent version history or fine-grained editor history. Adding code cells beneath prose keeps the original note intact. Renames with known resolved references show a warning preview; broader move/refactor UX remains future work.
 
 ## Architecture decisions
 

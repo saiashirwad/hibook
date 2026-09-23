@@ -42,9 +42,9 @@ interface SourceEditorProps {
 }
 
 const KIND_LABEL: Record<CellKind, string> = {
-  text: "prose",
-  javascript: "js",
-  markdown: "md",
+  text: "note",
+  javascript: "calculation",
+  markdown: "live Markdown",
 };
 
 const CELL_KINDS: readonly CellKind[] = ["text", "javascript", "markdown"];
@@ -293,14 +293,34 @@ function CellNode(props: CellNodeProps) {
 
   const createAfter = (kind: CellKind): void => {
     setChoosingKind(false);
-    const placement = props.view.zoomRootId() === props.cellId ? "child" : "after";
+    const placement = kind !== "text" && currentCell().kind === "text"
+      ? "child"
+      : props.view.zoomRootId() === props.cellId ? "child" : "after";
     const created = props.controller.createCell(props.cellId, kind, placement);
     if (typeof created !== "string") return;
+    if (placement === "child" && props.view.isCollapsed(props.cellId)) {
+      props.view.toggleCollapsed(props.cellId);
+    }
     props.view.select(created);
     focusNewCellEditor(created);
   };
 
   const saveRename = (input: HTMLInputElement): void => {
+    if (input.value !== label()) {
+      const preparedNotebook = props.controller.prepared();
+      const references = preparedNotebook?.cells.flatMap((prepared) =>
+        prepared.analysis.references
+          .filter((reference) => reference.resolution.status === "resolved" && reference.resolution.targetId === props.cellId)
+          .map((reference) => `${prepared.cellId}: ${prepared.source.slice(reference.path.span.start, reference.path.span.end)}`),
+      ) ?? [];
+      const analysisUnavailable = !preparedNotebook && Object.values(props.controller.document().cells).some((cell) => cell.kind !== "text");
+      if ((references.length > 0 || analysisUnavailable) && !confirm(
+        `Rename ${label()} to ${input.value}? Source will not be rewritten.\n\n${analysisUnavailable ? "Reference impact is not available while code is paused." : `These references may break:\n${references.join("\n")}`}`,
+      )) {
+        props.view.cancelRename(props.cellId);
+        return;
+      }
+    }
     const error = props.controller.renameCell(props.cellId, input.value);
     if (error) {
       props.view.setRenameError(props.cellId, error.message);
@@ -539,6 +559,9 @@ function CellNode(props: CellNodeProps) {
                 controller={props.controller}
                 onCreateAfter={() => createAfter("text")}
               />
+              <Show when={props.cellId === props.controller.document().rootId && currentCell().source === "" && Object.keys(props.controller.document().cells).length === 1}>
+                <p class={styles.guide}>Write a note. Use + to add a calculation or a live Markdown view beneath it.</p>
+              </Show>
             </Show>
 
             <Show when={showSource()}>
@@ -555,7 +578,7 @@ function CellNode(props: CellNodeProps) {
               </p>
             </Show>
 
-            <Show when={executable()}>
+            <Show when={executable() && props.controller.executionEnabled()}>
               <RuntimeOutput
                 kind={currentCell().kind}
                 status={runtimeStatus()}

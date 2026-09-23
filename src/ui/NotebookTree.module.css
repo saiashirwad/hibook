@@ -1,9 +1,7 @@
 .workspace {
   min-width: 0;
   width: 100%;
-  max-width: 72rem;
-  margin-inline: auto;
-  padding: clamp(1rem, 3vw, 2.5rem) clamp(0.75rem, 3vw, 2rem) 6rem;
+  padding: clamp(1rem, 3vw, 2.5rem) clamp(0.75rem, 3vw, 2rem) 1rem;
 }
 
 .breadcrumbs {
@@ -289,6 +287,8 @@
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
+
+.guide { margin: 0.2rem 0 0.5rem; color: var(--ink-muted); font-size: 0.78rem; }
 
 .codeSource {
   margin: 0.2rem 0 0.35rem;
