@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "Orb setup: Node $(node --version), npm $(npm --version)"
+fingerprint="$(node --version) $(sha256sum package.json package-lock.json)"
+marker=node_modules/.orb-setup-fingerprint
+
+if [[ -f "$marker" ]] && [[ "$(cat "$marker")" == "$fingerprint" ]]; then
+  echo "Orb setup: locked dependencies already installed"
+else
+  echo "Orb setup: installing locked dependencies"
+  time npm ci --no-audit --no-fund --prefer-offline
+  printf '%s\n' "$fingerprint" > "$marker"
+fi
