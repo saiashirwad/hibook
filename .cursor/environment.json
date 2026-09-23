@@ -1,0 +1,10 @@
+{
+  "name": "HiBook",
+  "install": "npm ci",
+  "terminals": [
+    {
+      "name": "dev",
+      "command": "npm run dev -- --host 127.0.0.1 --port 5173"
+    }
+  ]
+}
