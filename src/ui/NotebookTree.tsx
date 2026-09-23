@@ -192,6 +192,21 @@ function Chevron() {
   );
 }
 
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
+      <path
+        d="M2.5 3.5h7M4.5 3.5V2.5h3v1M3.5 3.5l.4 6.2h4.2l.4-6.2"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.3"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+    </svg>
+  );
+}
+
 function PlusIcon() {
   return (
     <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
@@ -419,6 +434,18 @@ function CellNode(props: CellNodeProps) {
     focusNewCellEditor(nextId, direction < 0 ? "end" : "start");
   };
 
+  const deleteCell = (): void => {
+    const labelText = label();
+    const childCount = currentCell().children.length;
+    const detail = childCount === 0 ? "" : ` and its ${childCount} nested ${childCount === 1 ? "note" : "notes"}`;
+    if (!confirm(`Delete ${labelText}${detail}? This can be undone.`)) return;
+    const focusId = props.controller.deleteCell(props.cellId);
+    if (typeof focusId !== "string") return;
+    props.view.select(focusId);
+    const treeItem = document.querySelector(`[data-cell-id="${CSS.escape(focusId)}"]`);
+    if (treeItem instanceof HTMLElement) treeItem.focus();
+  };
+
   const convertTo = (kind: CellKind): void => {
     setConverting(false);
     if (kind === currentCell().kind) return;
@@ -470,6 +497,14 @@ function CellNode(props: CellNodeProps) {
     if (event.key === "Tab") {
       event.preventDefault();
       structureMove(event.shiftKey ? "outdent" : "indent");
+      return;
+    }
+    if (
+      (event.key === "Backspace" || event.key === "Delete") &&
+      props.cellId !== props.controller.document().rootId
+    ) {
+      event.preventDefault();
+      deleteCell();
       return;
     }
 
@@ -675,6 +710,20 @@ function CellNode(props: CellNodeProps) {
                       onClose={() => setConverting(false)}
                     />
                   </Show>
+                </Show>
+                <Show when={props.cellId !== props.controller.document().rootId}>
+                  <button
+                    type="button"
+                    class={styles.iconButton}
+                    aria-label={`Delete ${label()}`}
+                    title="Delete this note and anything nested in it"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      deleteCell();
+                    }}
+                  >
+                    <TrashIcon />
+                  </button>
                 </Show>
                 <Show
                   when={choosingKind()}

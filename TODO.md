@@ -33,7 +33,7 @@ Observed on 2026-09-23 in the browser, starting from a blank local notebook and 
 
 Before this slice, Enter only inserted a newline, Tab left the editor, and every guessed indent shortcut did nothing. Shift+Enter added an empty note named `warmHarbor` beneath the whole notebook. The kind chooser then added `$(() => 0)` as another child of that notebook, so the budget paragraph never became the calculation. The live-Markdown starter was `md(() => "# Live view")` and had no path to the budget until the writer typed `parent.steadyHarbor.value` by hand. Arrow keys never crossed cells, Backspace at the start of a note did not join it, and F2 did not start a rename. Once written, the budget did compute 138,600 yen and survived reload from the local cache.
 
-This slice makes Enter split a note at the cursor, Tab/Shift+Tab indent and outdent, and a visible kind control turn a short note into a quoted calculation or live view. A second pass of the same trip confirmed the split, the nest, the conversion, the computed live view, and a cached reload.
+This slice makes Enter split a note at the cursor, Tab/Shift+Tab indent and outdent, and a visible kind control turn a short note into a quoted calculation or live view. A second pass of the same trip confirmed the split, the nest, the conversion, the computed live view, and a cached reload. A later pass adds deletion of a note and its nested children, with undo.
 
 ## Deferred beyond the demo
 

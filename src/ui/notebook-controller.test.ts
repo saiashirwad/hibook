@@ -274,6 +274,34 @@ describe("notebook controller", () => {
     }
   });
 
+  it("deletes a note and its nested children, and undo restores them", () => {
+    let dispose!: () => void;
+    const controller = createRoot((disposeRoot) => {
+      dispose = disposeRoot;
+      return createNotebookController({
+        document: testDocument(),
+        executionEnabled: false,
+        cache: inertCache,
+        fastCoordinator: fastCoordinator(),
+        semanticCoordinator: semanticCoordinator({ count: 0 }),
+      });
+    });
+    try {
+      expect(controller.indentCell("base")).toBeUndefined();
+      const focusId = controller.deleteCell("intro");
+      expect(focusId).toBe("root");
+      expect(controller.document().cells.intro).toBeUndefined();
+      expect(controller.document().cells.base).toBeUndefined();
+      expect(controller.document().cells.root?.children).toEqual(["derived", "other"]);
+      expect(controller.deleteCell("root")).toMatchObject({ code: "ROOT_PROTECTED" });
+      controller.undo();
+      expect(controller.document().cells.intro?.children).toEqual(["base"]);
+      expect(controller.document().cells.root?.children).toEqual(["intro", "derived", "other"]);
+    } finally {
+      dispose();
+    }
+  });
+
   it("turns a note into a quoted calculation without dropping the prose", () => {
     let dispose!: () => void;
     const controller = createRoot((disposeRoot) => {

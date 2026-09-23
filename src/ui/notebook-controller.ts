@@ -26,7 +26,7 @@ import type {
   SemanticProjectInput,
   SemanticQuickInfo,
 } from "../compiler/semantic-protocol";
-import { appendChild, insertSibling, move, parentOf, update } from "../model/commands";
+import { appendChild, insertSibling, move, parentOf, remove, update } from "../model/commands";
 import type {
   CellId,
   CellKind,
@@ -88,6 +88,7 @@ export interface NotebookController {
   indentCell(cellId: CellId): CommandError | undefined;
   outdentCell(cellId: CellId): CommandError | undefined;
   convertCell(cellId: CellId, kind: CellKind): CommandError | undefined;
+  deleteCell(cellId: CellId): CellId | CommandError;
   runtimeFor(cellId: CellId): CellRuntime | undefined;
   preparationFor(cellId: CellId): PreparedCell | undefined;
   semanticFor(cellId: CellId): CellSemanticDisplay;
@@ -853,6 +854,22 @@ export function createNotebookController(
       adoptDocument(result.document);
       if (executionEnabled()) void runDocument(result.document);
       return undefined;
+    },
+    deleteCell(cellId) {
+      const parent = parentOf(currentDocument, cellId);
+      if (!parent.ok) return parent.error;
+      if (parent.parentId === undefined) {
+        return { code: "ROOT_PROTECTED", message: "The notebook itself cannot be deleted." };
+      }
+      const siblings = currentDocument.cells[parent.parentId]?.children ?? [];
+      const index = siblings.indexOf(cellId);
+      const focusId = siblings[index - 1] ?? parent.parentId;
+      const result = remove(currentDocument, cellId);
+      if (!result.ok) return result.error;
+      adoptDocument(result.document);
+      invalidateSemantic(result.document);
+      if (executionEnabled()) void runDocument(result.document);
+      return focusId;
     },
     convertCell(cellId, kind) {
       const currentCell = currentDocument.cells[cellId];
