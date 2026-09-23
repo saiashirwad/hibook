@@ -1,6 +1,6 @@
 import { autocompletion } from "@codemirror/autocomplete";
 import type { Completion } from "@codemirror/autocomplete";
-import { history, historyKeymap, defaultKeymap } from "@codemirror/commands";
+import { history, historyKeymap, defaultKeymap, insertNewline } from "@codemirror/commands";
 import {
   HighlightStyle,
   bracketMatching,
@@ -38,6 +38,12 @@ interface CodeEditorProps {
   readonly onChange: (source: string) => void;
   readonly onRun: () => void;
   readonly onCreateAfter?: () => void;
+  readonly onSplit?: ((cursor: number) => void) | undefined;
+  readonly outlineTab?: boolean;
+  readonly onIndent?: () => void;
+  readonly onOutdent?: () => void;
+  readonly onFocusPrevious?: () => void;
+  readonly onFocusNext?: () => void;
   readonly onBlur?: () => void;
   readonly diagnostics?: readonly SemanticDiagnostic[] | undefined;
   readonly onComplete?: (position: number) => Promise<SemanticCompletionResult>;
@@ -297,6 +303,60 @@ export default function CodeEditor(props: CodeEditorProps) {
       props.onCreateAfter?.();
       return true;
     };
+    const splitAtCursor = (editor: EditorView) => {
+      props.onSplit?.(editor.state.selection.main.head);
+      return true;
+    };
+    const atDocBoundary = (editor: EditorView, edge: "start" | "end") => {
+      const selection = editor.state.selection.main;
+      if (!selection.empty) return false;
+      const doc = editor.state.doc;
+      return edge === "start"
+        ? selection.head === doc.line(1).from
+        : selection.head === doc.line(doc.lines).to;
+    };
+    const indentCell = () => {
+      props.onIndent?.();
+      return true;
+    };
+    const outdentCell = () => {
+      props.onOutdent?.();
+      return true;
+    };
+    const structureKeys = [
+      ...(props.onSplit
+        ? [
+            { key: "Enter", run: splitAtCursor },
+            { key: "Shift-Enter", run: insertNewline },
+          ]
+        : []),
+      { key: "Alt-ArrowRight", run: indentCell },
+      { key: "Alt-ArrowLeft", run: outdentCell },
+      { key: "Mod-]", run: indentCell },
+      { key: "Mod-[", run: outdentCell },
+      ...(props.outlineTab
+        ? [
+            { key: "Tab", run: indentCell },
+            { key: "Shift-Tab", run: outdentCell },
+          ]
+        : []),
+      {
+        key: "ArrowUp",
+        run(editor: EditorView) {
+          if (!atDocBoundary(editor, "start") || !props.onFocusPrevious) return false;
+          props.onFocusPrevious();
+          return true;
+        },
+      },
+      {
+        key: "ArrowDown",
+        run(editor: EditorView) {
+          if (!atDocBoundary(editor, "end") || !props.onFocusNext) return false;
+          props.onFocusNext();
+          return true;
+        },
+      },
+    ];
     const extensions: Extension[] = [
       history(),
       drawSelection(),
@@ -306,6 +366,7 @@ export default function CodeEditor(props: CodeEditorProps) {
       EditorView.lineWrapping,
       editorTheme,
       keymap.of([
+        ...structureKeys,
         { key: "Mod-Enter", run: runCurrentCell },
         { key: "Ctrl-Enter", run: runCurrentCell },
         { key: "Shift-Enter", run: createCellAfter },

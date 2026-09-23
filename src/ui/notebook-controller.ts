@@ -26,7 +26,7 @@ import type {
   SemanticProjectInput,
   SemanticQuickInfo,
 } from "../compiler/semantic-protocol";
-import { appendChild, insertSibling, update } from "../model/commands";
+import { appendChild, insertSibling, move, parentOf, update } from "../model/commands";
 import type {
   CellId,
   CellKind,
@@ -35,6 +35,7 @@ import type {
 } from "../model/types";
 import type { DependencyIssue } from "../runtime/analysis-types";
 import { executeNotebookTransaction } from "../runtime/execute";
+import { proseProgram, splitProse } from "./prose-structure";
 import {
   createRuntimeRegistry,
   ensureCellRuntime,
@@ -83,6 +84,10 @@ export interface NotebookController {
     kind: CellKind,
     placement: "after" | "child",
   ): CellId | CommandError;
+  splitCell(cellId: CellId, cursor: number): CellId | CommandError;
+  indentCell(cellId: CellId): CommandError | undefined;
+  outdentCell(cellId: CellId): CommandError | undefined;
+  convertCell(cellId: CellId, kind: CellKind): CommandError | undefined;
   runtimeFor(cellId: CellId): CellRuntime | undefined;
   preparationFor(cellId: CellId): PreparedCell | undefined;
   semanticFor(cellId: CellId): CellSemanticDisplay;
@@ -103,8 +108,30 @@ export interface NotebookControllerOptions {
 const INITIAL_SOURCE: Record<CellKind, string> = {
   text: "",
   javascript: "$(() => 0)",
-  markdown: "md(() => \"# Live view\")",
+  markdown: "md(() => \"\")",
 };
+
+function newCellId(): CellId {
+  return `cell-${crypto.randomUUID()}`;
+}
+
+function carriedSource(kind: CellKind, prose: string): string {
+  const passage = prose.trim();
+  const onePassage = passage !== "" && !/\n\s*\n/.test(passage) && passage.length <= 400;
+  return kind !== "text" && onePassage ? proseProgram(kind, passage) : INITIAL_SOURCE[kind];
+}
+
+function nextSiblingId(
+  document: NotebookDocument,
+  cellId: CellId,
+  parentId: CellId | undefined,
+): CellId | undefined {
+  if (parentId === undefined) return document.cells[cellId]?.children[0];
+  const siblings = document.cells[parentId]?.children;
+  if (!siblings) return undefined;
+  const index = siblings.indexOf(cellId);
+  return index < 0 ? undefined : siblings[index + 1];
+}
 
 function errorMessage(error: unknown): string {
   try {
@@ -736,10 +763,13 @@ export function createNotebookController(
       return undefined;
     },
     createCell(referenceId, kind, placement) {
+      const reference = currentDocument.cells[referenceId];
       const input = {
-        id: `cell-${crypto.randomUUID()}`,
+        id: newCellId(),
         kind,
-        source: INITIAL_SOURCE[kind],
+        source: reference?.kind === "text" && (placement === "child" || carriedSource(kind, reference.source) !== INITIAL_SOURCE[kind])
+          ? carriedSource(kind, reference.source)
+          : INITIAL_SOURCE[kind],
         classes: [],
         metadata: {},
       };
@@ -753,6 +783,95 @@ export function createNotebookController(
       invalidateSemantic(result.document, [input.id]);
       if (executionEnabled()) void runDocument(result.document, [input.id]);
       return input.id;
+    },
+    splitCell(cellId, cursor) {
+      const currentCell = currentDocument.cells[cellId];
+      if (!currentCell || currentCell.kind !== "text") {
+        return { code: "INVALID_CELL", message: "Only a note can be split." };
+      }
+      const { before, after } = splitProse(currentCell.source, cursor);
+      const kept = update(currentDocument, cellId, { source: before });
+      if (!kept.ok) return kept.error;
+      const input = {
+        id: newCellId(),
+        kind: "text" as const,
+        source: after,
+        classes: [],
+        metadata: {},
+      };
+      const parent = parentOf(kept.document, cellId);
+      if (!parent.ok) return parent.error;
+      const followingId = nextSiblingId(kept.document, cellId, parent.parentId);
+      const placed = followingId === undefined
+        ? appendChild(kept.document, parent.parentId ?? cellId, input)
+        : insertSibling(kept.document, followingId, "before", input);
+      if (!placed.ok) return placed.error;
+      const nestChildren = currentCell.children.length > 0 && parent.parentId !== undefined;
+      if (!nestChildren) {
+        adoptDocument(placed.document);
+        return input.id;
+      }
+      let nested = placed.document;
+      for (const childId of currentCell.children) {
+        const moved = move(nested, childId, { type: "child", parentId: input.id });
+        if (!moved.ok) return moved.error;
+        nested = moved.document;
+      }
+      adoptDocument(nested);
+      if (executionEnabled()) void runDocument(nested);
+      return input.id;
+    },
+    indentCell(cellId) {
+      const parent = parentOf(currentDocument, cellId);
+      if (!parent.ok) return parent.error;
+      if (parent.parentId === undefined) {
+        return { code: "ROOT_PROTECTED", message: "The notebook itself cannot be indented." };
+      }
+      const siblings = currentDocument.cells[parent.parentId]?.children ?? [];
+      const previousId = siblings[siblings.indexOf(cellId) - 1];
+      if (previousId === undefined) {
+        return { code: "INVALID_TARGET", message: "Nothing above this note can hold it." };
+      }
+      const result = move(currentDocument, cellId, { type: "child", parentId: previousId });
+      if (!result.ok) return result.error;
+      adoptDocument(result.document);
+      if (executionEnabled()) void runDocument(result.document);
+      return undefined;
+    },
+    outdentCell(cellId) {
+      const parent = parentOf(currentDocument, cellId);
+      if (!parent.ok) return parent.error;
+      if (parent.parentId === undefined || parent.parentId === currentDocument.rootId) {
+        return { code: "ROOT_HAS_NO_SIBLINGS", message: "This note is already at the top level." };
+      }
+      const result = move(currentDocument, cellId, {
+        type: "sibling",
+        referenceId: parent.parentId,
+        position: "after",
+      });
+      if (!result.ok) return result.error;
+      adoptDocument(result.document);
+      if (executionEnabled()) void runDocument(result.document);
+      return undefined;
+    },
+    convertCell(cellId, kind) {
+      const currentCell = currentDocument.cells[cellId];
+      if (!currentCell) return { code: "CELL_NOT_FOUND", message: "That note no longer exists." };
+      if (currentCell.kind === kind) return undefined;
+      if (cellId === currentDocument.rootId) {
+        return { code: "ROOT_PROTECTED", message: "The notebook itself stays a note." };
+      }
+      const source = currentCell.kind === "text" && kind !== "text"
+        ? proseProgram(kind, currentCell.source)
+        : currentCell.kind !== "text" && kind === "text"
+          ? currentCell.source
+          : currentCell.source;
+      const result = update(currentDocument, cellId, { kind, source });
+      if (!result.ok) return result.error;
+      adoptDocument(result.document);
+      invalidateSemantic(result.document, [cellId]);
+      if (executionEnabled()) void runDocument(result.document, [cellId]);
+      return undefined;
     },
     runtimeFor(cellId) {
       runtimeEpoch();

@@ -221,6 +221,7 @@
 }
 
 .heading:hover .iconButton,
+.node[data-selected] > .main .actions .iconButton,
 .actions:focus-within .iconButton,
 .iconButton[aria-pressed="true"] {
   opacity: 1;
@@ -235,6 +236,13 @@
   color: var(--accent);
 }
 
+.kindButton {
+  width: auto;
+  padding-inline: 0.35rem;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+}
+
 .kindChooser {
   display: inline-flex;
   gap: 0.1rem;
@@ -245,6 +253,7 @@
 }
 
 .kindOption {
+  min-height: 1.5rem;
   padding: 0.05rem 0.4rem;
   border: 0;
   border-radius: var(--radius-sm);
@@ -435,6 +444,11 @@
 @media (max-width: 44rem) {
   .main {
     grid-template-columns: 2rem minmax(0, 1fr);
+  }
+
+  .kindOption,
+  .kindButton {
+    min-height: 2.75rem;
   }
 
   .children {

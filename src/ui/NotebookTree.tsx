@@ -39,6 +39,11 @@ interface SourceEditorProps {
   readonly cell: Cell;
   readonly controller: NotebookController;
   readonly onCreateAfter: () => void;
+  readonly onSplit?: (cursor: number) => void;
+  readonly onIndent: () => void;
+  readonly onOutdent: () => void;
+  readonly onFocusPrevious: () => void;
+  readonly onFocusNext: () => void;
 }
 
 const KIND_LABEL: Record<CellKind, string> = {
@@ -136,6 +141,12 @@ function ProseSource(props: SourceEditorProps) {
         }
         onRun={() => props.controller.runCell(props.cell.id)}
         onCreateAfter={props.onCreateAfter}
+        onSplit={props.onSplit}
+        outlineTab
+        onIndent={props.onIndent}
+        onOutdent={props.onOutdent}
+        onFocusPrevious={props.onFocusPrevious}
+        onFocusNext={props.onFocusNext}
       />
     </div>
   );
@@ -157,6 +168,10 @@ function ExecutableSource(props: SourceEditorProps) {
         }
         onRun={() => props.controller.runCell(props.cell.id)}
         onCreateAfter={props.onCreateAfter}
+        onIndent={props.onIndent}
+        onOutdent={props.onOutdent}
+        onFocusPrevious={props.onFocusPrevious}
+        onFocusNext={props.onFocusNext}
         diagnostics={diagnostics()}
         onComplete={(position) =>
           props.controller.completionsFor(props.cell.id, position)
@@ -208,30 +223,91 @@ function focusEditor(treeItem: Element): EditorView | null {
   return content ? EditorView.findFromDOM(content) : null;
 }
 
-function focusNewCellEditor(cellId: CellId): void {
-  requestAnimationFrame(() => {
-    const treeItem = document.querySelector(`[data-cell-id="${CSS.escape(cellId)}"]`);
-    const view = treeItem && focusEditor(treeItem);
-    if (!view) return;
-    const doc = view.state.doc;
-    let anchor = doc.length;
-    for (let number = 1; number <= doc.lines; number += 1) {
-      const line = doc.line(number);
-      if (line.text.trim() === "") {
-        anchor = line.to;
-        break;
-      }
-    }
-    view.dispatch({ selection: { anchor } });
-  });
+function focusNewCellEditor(cellId: CellId, edge: "start" | "end" = "end"): void {
+  holdKeysFor(cellId, edge);
 }
 
-function KindChooser(props: { readonly onPick: (kind: CellKind) => void; readonly onClose: () => void }) {
+/**
+ * A split returns before the new editor can take focus. Text typed in
+ * that gap arrives as `beforeinput` on the note just left — including
+ * insertions that never fire a keydown. Hold those insertions and deliver
+ * them once the new editor exists.
+ */
+function holdKeysFor(cellId: CellId, edge: "start" | "end"): void {
+  let pending = "";
+  let stopped = false;
+  const editorFor = (): EditorView | null => {
+    const treeItem = document.querySelector(`[data-cell-id="${CSS.escape(cellId)}"]`);
+    return treeItem ? focusEditor(treeItem) : null;
+  };
+  const flush = (view: EditorView) => {
+    if (pending === "") return;
+    const insert = pending;
+    pending = "";
+    const at = view.state.selection.main.head;
+    view.dispatch({ changes: { from: at, insert }, selection: { anchor: at + insert.length } });
+  };
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    window.removeEventListener("beforeinput", onBeforeInput, true);
+  };
+  const onBeforeInput = (event: InputEvent) => {
+    const content = document.querySelector(`[data-cell-id="${CSS.escape(cellId)}"] .cm-content`);
+    if (content?.contains(event.target as Node)) {
+      stop();
+      return;
+    }
+    if (event.isComposing) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.inputType === "insertText" || event.inputType === "insertCompositionText") {
+      pending += event.data ?? "";
+    } else if (event.inputType === "deleteContentBackward") {
+      pending = pending.slice(0, -1);
+    }
+    const view = editorFor();
+    if (view) flush(view);
+  };
+  window.addEventListener("beforeinput", onBeforeInput, true);
+  const finish = (attempt = 0) => {
+    const view = editorFor();
+    if (!view) {
+      if (attempt < 8) requestAnimationFrame(() => finish(attempt + 1));
+      else stop();
+      return;
+    }
+    const doc = view.state.doc;
+    view.dispatch({ selection: { anchor: edge === "start" ? doc.line(1).from : doc.line(doc.lines).to } });
+    view.focus();
+    flush(view);
+  };
+  queueMicrotask(() => finish());
+  window.setTimeout(stop, 500);
+}
+
+function visibleTreeItems(treeItem: Element): HTMLElement[] {
+  const tree = treeItem.closest<HTMLElement>('[role="tree"]');
+  return tree ? [...tree.querySelectorAll<HTMLElement>('[role="treeitem"]')] : [];
+}
+
+function adjacentCell(treeItem: Element, direction: -1 | 1): CellId | undefined {
+  const items = visibleTreeItems(treeItem);
+  const index = items.indexOf(treeItem as HTMLElement);
+  return items[index + direction]?.dataset.cellId;
+}
+
+function KindChooser(props: {
+  readonly onPick: (kind: CellKind) => void;
+  readonly onClose: () => void;
+  readonly label?: string;
+  readonly current?: CellKind;
+}) {
   return (
     <span
       class={styles.kindChooser}
       role="group"
-      aria-label="New cell kind"
+      aria-label={props.label ?? "New cell kind"}
       onKeyDown={(event) => {
         if (event.key === "Escape") {
           event.preventDefault();
@@ -251,6 +327,7 @@ function KindChooser(props: { readonly onPick: (kind: CellKind) => void; readonl
           <button
             type="button"
             class={styles.kindOption}
+            aria-pressed={props.current === kind ? "true" : undefined}
             ref={(button) => {
               if (index() === 0) onSettled(() => button.focus());
             }}
@@ -290,6 +367,7 @@ function CellNode(props: CellNodeProps) {
   const showSource = () =>
     executable() && (selected() || props.view.isPinned(props.cellId));
   const [choosingKind, setChoosingKind] = createSignal(false);
+  const [converting, setConverting] = createSignal(false);
 
   const createAfter = (kind: CellKind): void => {
     setChoosingKind(false);
@@ -303,6 +381,51 @@ function CellNode(props: CellNodeProps) {
     }
     props.view.select(created);
     focusNewCellEditor(created);
+  };
+
+  const splitAt = (cursor: number): void => {
+    const created = props.controller.splitCell(props.cellId, cursor);
+    if (typeof created !== "string") return;
+    const visible = breadcrumbsFor(props.controller.document(), created)
+      .some((crumb) => crumb.id === props.view.zoomRootId());
+    if (!visible) {
+      const parent = breadcrumbsFor(props.controller.document(), created).at(-2);
+      if (parent) props.view.zoom(parent.id);
+    }
+    props.view.select(created);
+    focusNewCellEditor(created, "start");
+  };
+
+  const structureMove = (direction: "indent" | "outdent"): void => {
+    const hostId = direction === "indent"
+      ? adjacentCell(
+          document.querySelector(`[data-cell-id="${CSS.escape(props.cellId)}"]`) ?? document.body,
+          -1,
+        )
+      : undefined;
+    const error = direction === "indent"
+      ? props.controller.indentCell(props.cellId)
+      : props.controller.outdentCell(props.cellId);
+    if (error) return;
+    if (hostId && props.view.isCollapsed(hostId)) props.view.toggleCollapsed(hostId);
+    focusNewCellEditor(props.cellId, "end");
+  };
+
+  const moveFocus = (direction: -1 | 1): void => {
+    const current = document.querySelector(`[data-cell-id="${CSS.escape(props.cellId)}"]`);
+    const nextId = current ? adjacentCell(current, direction) : undefined;
+    if (!nextId) return;
+    props.view.select(nextId);
+    focusNewCellEditor(nextId, direction < 0 ? "end" : "start");
+  };
+
+  const convertTo = (kind: CellKind): void => {
+    setConverting(false);
+    if (kind === currentCell().kind) return;
+    const error = props.controller.convertCell(props.cellId, kind);
+    if (error) return;
+    props.view.select(props.cellId);
+    focusNewCellEditor(props.cellId, "end");
   };
 
   const saveRename = (input: HTMLInputElement): void => {
@@ -342,6 +465,11 @@ function CellNode(props: CellNodeProps) {
     if (event.key === "Enter" && event.shiftKey) {
       event.preventDefault();
       createAfter(currentCell().kind);
+      return;
+    }
+    if (event.key === "Tab") {
+      event.preventDefault();
+      structureMove(event.shiftKey ? "outdent" : "indent");
       return;
     }
 
@@ -521,6 +649,33 @@ function CellNode(props: CellNodeProps) {
                     <PinIcon />
                   </button>
                 </Show>
+                <Show when={props.cellId !== props.controller.document().rootId}>
+                  <Show
+                    when={converting()}
+                    fallback={
+                      <button
+                        type="button"
+                        class={`${styles.iconButton} ${styles.kindButton}`}
+                        aria-label={`Turn ${label()} into another kind`}
+                        title="Turn this into a note, calculation, or live Markdown"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setChoosingKind(false);
+                          setConverting(true);
+                        }}
+                      >
+                        {KIND_LABEL[currentCell().kind]}
+                      </button>
+                    }
+                  >
+                    <KindChooser
+                      label={`Turn ${label()} into`}
+                      current={currentCell().kind}
+                      onPick={convertTo}
+                      onClose={() => setConverting(false)}
+                    />
+                  </Show>
+                </Show>
                 <Show
                   when={choosingKind()}
                   fallback={
@@ -528,9 +683,10 @@ function CellNode(props: CellNodeProps) {
                       type="button"
                       class={styles.iconButton}
                       aria-label={`Add cell after ${label()}`}
-                      title="Add cell (Shift+Enter)"
+                      title="Add a note, calculation, or live Markdown (Shift+Enter adds the same kind)"
                       onClick={(event) => {
                         event.stopPropagation();
+                        setConverting(false);
                         setChoosingKind(true);
                       }}
                     >
@@ -558,9 +714,14 @@ function CellNode(props: CellNodeProps) {
                 cell={currentCell()}
                 controller={props.controller}
                 onCreateAfter={() => createAfter("text")}
+                onSplit={splitAt}
+                onIndent={() => structureMove("indent")}
+                onOutdent={() => structureMove("outdent")}
+                onFocusPrevious={() => moveFocus(-1)}
+                onFocusNext={() => moveFocus(1)}
               />
               <Show when={props.cellId === props.controller.document().rootId && currentCell().source === "" && Object.keys(props.controller.document().cells).length === 1}>
-                <p class={styles.guide}>Write a note. Use + to add a calculation or a live Markdown view beneath it.</p>
+                <p class={styles.guide}>Write the note. Enter splits it at the cursor; Shift+Enter stays in the note. Tab nests a note under the one above. Turn a short note into a calculation when you want the number to compute.</p>
               </Show>
             </Show>
 
@@ -569,6 +730,10 @@ function CellNode(props: CellNodeProps) {
                 cell={currentCell()}
                 controller={props.controller}
                 onCreateAfter={() => createAfter(currentCell().kind)}
+                onIndent={() => structureMove("indent")}
+                onOutdent={() => structureMove("outdent")}
+                onFocusPrevious={() => moveFocus(-1)}
+                onFocusNext={() => moveFocus(1)}
               />
             </Show>
 

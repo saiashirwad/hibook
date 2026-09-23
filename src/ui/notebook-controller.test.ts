@@ -216,6 +216,118 @@ describe("notebook controller", () => {
     });
   });
 
+  it("splits a root note into a following child and keeps later paragraphs", () => {
+    let dispose!: () => void;
+    const controller = createRoot((disposeRoot) => {
+      dispose = disposeRoot;
+      return createNotebookController({
+        document: {
+          rootId: "root",
+          cells: {
+            root: cell("root", "text", "Kyoto.\n\nStay, 18000 yen.\n\nThen a number.", ["base"]),
+            base: cell("base", "javascript", "$(() => 1)"),
+          },
+        },
+        executionEnabled: false,
+        cache: inertCache,
+        fastCoordinator: fastCoordinator(),
+        semanticCoordinator: semanticCoordinator({ count: 0 }),
+      });
+    });
+    try {
+      const created = controller.splitCell("root", "Kyoto.\n\n".length);
+      expect(typeof created).toBe("string");
+      const nextId = created as string;
+      expect(controller.document().cells.root?.source).toBe("Kyoto.");
+      expect(controller.document().cells.root?.children[0]).toBe(nextId);
+      expect(controller.document().cells.root?.children).toContain("base");
+      expect(controller.document().cells[nextId]?.source).toBe("Stay, 18000 yen.\n\nThen a number.");
+      expect(controller.document().cells[nextId]?.kind).toBe("text");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("indents a note under the previous sibling and outdents it again", () => {
+    let dispose!: () => void;
+    const controller = createRoot((disposeRoot) => {
+      dispose = disposeRoot;
+      return createNotebookController({
+        document: testDocument(),
+        executionEnabled: false,
+        cache: inertCache,
+        fastCoordinator: fastCoordinator(),
+        semanticCoordinator: semanticCoordinator({ count: 0 }),
+      });
+    });
+    try {
+      expect(controller.indentCell("base")).toBeUndefined();
+      expect(controller.document().cells.intro?.children).toEqual(["base"]);
+      expect(controller.document().cells.root?.children).toEqual(["intro", "derived", "other"]);
+      expect(controller.outdentCell("base")).toBeUndefined();
+      expect(controller.document().cells.intro?.children).toEqual([]);
+      expect(controller.document().cells.root?.children).toEqual(["intro", "base", "derived", "other"]);
+      expect(controller.indentCell("root")?.code).toBe("ROOT_PROTECTED");
+      expect(controller.outdentCell("intro")?.code).toBe("ROOT_HAS_NO_SIBLINGS");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("turns a note into a quoted calculation without dropping the prose", () => {
+    let dispose!: () => void;
+    const controller = createRoot((disposeRoot) => {
+      dispose = disposeRoot;
+      return createNotebookController({
+        document: testDocument(),
+        executionEnabled: false,
+        cache: inertCache,
+        fastCoordinator: fastCoordinator(),
+        semanticCoordinator: semanticCoordinator({ count: 0 }),
+      });
+    });
+    try {
+      expect(controller.convertCell("intro", "javascript")).toBeUndefined();
+      expect(controller.document().cells.intro).toMatchObject({
+        kind: "javascript",
+        source: '$(() => "Prose")',
+      });
+      expect(controller.convertCell("root", "javascript")?.code).toBe("ROOT_PROTECTED");
+      expect(controller.document().cells.root?.kind).toBe("text");
+    } finally {
+      dispose();
+    }
+  });
+
+  it("carries the note into a new calculation instead of starting at zero", () => {
+    let dispose!: () => void;
+    const controller = createRoot((disposeRoot) => {
+      dispose = disposeRoot;
+      return createNotebookController({
+        document: testDocument(),
+        executionEnabled: false,
+        cache: inertCache,
+        fastCoordinator: fastCoordinator(),
+        semanticCoordinator: semanticCoordinator({ count: 0 }),
+      });
+    });
+    try {
+      const created = controller.createCell("intro", "markdown", "child");
+      expect(typeof created).toBe("string");
+      expect(controller.document().cells[created as string]?.source).toBe('md(() => "Prose")');
+      const fromRoot = controller.createCell("root", "javascript", "child");
+      expect(controller.document().cells[fromRoot as string]?.source).toBe('$(() => "Notebook")');
+      expect(controller.document().cells.intro?.children).toEqual([created]);
+      expect(controller.document().cells.intro?.source).toBe("Prose");
+      controller.updateCellSource("intro", "First paragraph.\n\nSecond paragraph.");
+      const untouched = controller.createCell("intro", "javascript", "child");
+      expect(controller.document().cells[untouched as string]?.source).toBe("$(() => 0)");
+      expect(controller.document().cells.intro?.source).toContain("First paragraph.");
+    } finally {
+      dispose();
+    }
+  });
+
   it("keeps the last prepared notebook visible while an edit is preparing", async () => {
     await withController(async (controller) => {
       const preparation = controller.preparationFor("derived");
